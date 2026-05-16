@@ -55,15 +55,16 @@ echo ""
 echo -e "🔧  Checking environment…"
 if [ ! -f ".env" ]; then
     cp .env.example .env
-    # Replace hardcoded /root/ paths with the actual project directory.
-    # /root/ is only writable by root; on GX10 the user is non-root.
+    echo -e "    ${YELLOW}No .env found — created from .env.example${NC}"
+fi
+
+# Always fix /root/ paths — /root/ is not writable by non-root users.
+if grep -q "REPOS_DIR=/root" .env 2>/dev/null; then
     sed -i "s|REPOS_DIR=.*|REPOS_DIR=$SCRIPT_DIR/repos|" .env
     sed -i "s|REPORTS_DIR=.*|REPORTS_DIR=$SCRIPT_DIR/reports|" .env
-    echo -e "    ${YELLOW}No .env found — created with paths set to $SCRIPT_DIR${NC}"
-    echo -e "${GREEN}✅  .env ready${NC}"
-else
-    echo -e "${GREEN}✅  .env present${NC}"
+    echo -e "    ${YELLOW}Sandbox paths updated to $SCRIPT_DIR${NC}"
 fi
+echo -e "${GREEN}✅  .env ready${NC}"
 
 # ── 2. Ollama — start if not running, pull model if missing ───────────────────
 echo -e "🤖  Checking Ollama…"
