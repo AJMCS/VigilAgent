@@ -313,6 +313,11 @@ class WatchRequest(BaseModel):
     github_token: str
 
 
+class ChatRequest(BaseModel):
+    question: str
+    history: list[dict] = []   # [{role: "user"|"assistant", content: str}]
+
+
 class JobStatus(BaseModel):
     job_id: str
     status: str
@@ -437,3 +442,43 @@ def get_report(filename: str) -> dict:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Report not found")
     return json.loads(path.read_text())
+
+
+@app.post("/reports/{filename}/chat")
+async def chat_with_report(filename: str, body: ChatRequest) -> dict:
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = settings.reports_dir / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    report = json.loads(path.read_text())
+
+    system = (
+        f"You are VigilAgent, a security expert assistant helping a developer understand "
+        f"a security audit report.\n\n"
+        f"Repository: {report.get('repo_url', 'unknown')}\n"
+        f"Scanned at: {report.get('generated_at', 'unknown')}\n\n"
+        f"SECURITY REPORT:\n{report.get('report', '')}\n\n"
+        f"RAW TOOL FINDINGS (JSON):\n"
+        f"{json.dumps(report.get('raw_scan_results', {}))[:4000]}\n\n"
+        f"Answer questions based only on the findings above. "
+        f"Cite specific files, line numbers, or CVEs when relevant. Be concise and actionable."
+    )
+
+    messages = [{"role": "system", "content": system}]
+    messages.extend(body.history)
+    messages.append({"role": "user", "content": body.question})
+
+    from openai import OpenAI as _OpenAI
+    client = _OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+
+    response = await asyncio.to_thread(
+        lambda: client.chat.completions.create(
+            model=settings.primary_model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1024,
+        )
+    )
+    return {"answer": response.choices[0].message.content}

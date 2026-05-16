@@ -47,6 +47,12 @@ export const api = {
   listScans: () => request('/scans'),
   listReports: () => request('/reports'),
   getReport: (filename) => request(`/reports/${encodeURIComponent(filename)}`),
+  // Report chat
+  chatWithReport: (filename, question, history) =>
+    request(`/reports/${encodeURIComponent(filename)}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ question, history }),
+    }),
   // Watchlist
   getWatchlist: () => request('/watch'),
   addWatch: (repo_url, github_token) =>

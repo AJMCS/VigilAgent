@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Printer, ArrowLeft, Shield, Calendar, Cpu } from 'lucide-react'
+import { Printer, ArrowLeft, Shield, Calendar, Cpu, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import ReportChat from './ReportChat'
 
 function extractRiskScore(text) {
   const m = text?.match(/risk score[^0-9]*(\d{1,3})/i)
@@ -32,7 +34,8 @@ const markdownComponents = {
   ),
 }
 
-export default function ReportViewer({ report }) {
+export default function ReportViewer({ report, filename }) {
+  const [chatOpen, setChatOpen] = useState(false)
   const repoName = report.repo_url?.split('/').slice(-2).join('/')
   const generatedAt = report.generated_at
   const displayTs = generatedAt
@@ -56,12 +59,24 @@ export default function ReportViewer({ report }) {
         >
           <ArrowLeft size={15} /> Back to Reports
         </Link>
-        <button
-          onClick={handlePrint}
-          className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors"
-        >
-          <Printer size={14} /> Download PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setChatOpen(v => !v)}
+            className={`flex items-center gap-1.5 px-4 py-2 border rounded-lg text-sm transition-colors ${
+              chatOpen
+                ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-300'
+                : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+            }`}
+          >
+            <MessageSquare size={14} /> Ask Nemotron
+          </button>
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors"
+          >
+            <Printer size={14} /> Download PDF
+          </button>
+        </div>
       </div>
 
       {/* Report card */}
@@ -104,6 +119,9 @@ export default function ReportViewer({ report }) {
           </div>
         </div>
       </div>
+    {chatOpen && filename && (
+        <ReportChat filename={filename} />
+      )}
     </div>
   )
 }
