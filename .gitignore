@@ -1,4 +1,5 @@
 .env
+watchlist.json
 __pycache__/
 *.pyc
 *.pyo

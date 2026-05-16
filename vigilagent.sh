@@ -54,9 +54,13 @@ echo ""
 # ── 1. .env — auto-create from example if missing ─────────────────────────────
 echo -e "🔧  Checking environment…"
 if [ ! -f ".env" ]; then
-    echo -e "    ${YELLOW}No .env found — copying from .env.example${NC}"
     cp .env.example .env
-    echo -e "${GREEN}✅  .env created with defaults${NC}"
+    # Replace hardcoded /root/ paths with the actual project directory.
+    # /root/ is only writable by root; on GX10 the user is non-root.
+    sed -i "s|REPOS_DIR=.*|REPOS_DIR=$SCRIPT_DIR/repos|" .env
+    sed -i "s|REPORTS_DIR=.*|REPORTS_DIR=$SCRIPT_DIR/reports|" .env
+    echo -e "    ${YELLOW}No .env found — created with paths set to $SCRIPT_DIR${NC}"
+    echo -e "${GREEN}✅  .env ready${NC}"
 else
     echo -e "${GREEN}✅  .env present${NC}"
 fi
@@ -78,7 +82,8 @@ if ! curl -s --max-time 2 http://localhost:11434 > /dev/null 2>&1; then
         echo ""
         echo -e "${RED}❌  Could not start Ollama. Is it installed?${NC}"
         echo ""
-        echo -e "    Install it with:  ${BOLD}curl -fsSL https://ollama.com/install.sh | sh${NC}"
+        echo -e "    Install with:  ${BOLD}curl -fsSL https://ollama.com/install.sh | sh${NC}"
+        echo -e "    Then run:      ${BOLD}ollama run nemotron-mini${NC}"
         echo ""
         exit 1
     fi
@@ -88,14 +93,17 @@ else
 fi
 
 # Pull the model if it isn't already downloaded
-MODEL="nemotron-super"
+MODEL="nemotron-mini"
 if ! ollama list 2>/dev/null | grep -q "$MODEL"; then
     echo -e "    ${YELLOW}Model '$MODEL' not found — pulling now (first run only)…${NC}"
-    ollama pull "$MODEL"
-    echo -e "${GREEN}✅  Model ready${NC}"
-else
-    echo -e "${GREEN}✅  Model '$MODEL' ready${NC}"
+    if ! ollama pull "$MODEL"; then
+        echo ""
+        echo -e "${RED}❌  Failed to pull '$MODEL'. Check your Ollama installation.${NC}"
+        echo ""
+        exit 1
+    fi
 fi
+echo -e "${GREEN}✅  Model '$MODEL' ready${NC}"
 echo ""
 
 # ── 3. Python venv — create + install if missing ───────────────────────────────

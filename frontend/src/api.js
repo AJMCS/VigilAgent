@@ -47,4 +47,10 @@ export const api = {
   listScans: () => request('/scans'),
   listReports: () => request('/reports'),
   getReport: (filename) => request(`/reports/${encodeURIComponent(filename)}`),
+  // Watchlist
+  getWatchlist: () => request('/watch'),
+  addWatch: (repo_url, github_token) =>
+    request('/watch', { method: 'POST', body: JSON.stringify({ repo_url, github_token }) }),
+  removeWatch: (owner, repo) =>
+    request(`/watch/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, { method: 'DELETE' }),
 }

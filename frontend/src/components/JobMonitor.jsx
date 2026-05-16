@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Activity, Clock, CheckCircle2, XCircle, ExternalLink } from 'lucide-react'
+import { Activity, Clock, CheckCircle2, XCircle, ExternalLink, GitPullRequest } from 'lucide-react'
 import PipelineSteps from './PipelineSteps'
 import { api } from '../api'
 
@@ -25,21 +25,38 @@ function timeAgo(iso) {
   return `${Math.floor(diff / 3600)}h ago`
 }
 
+const isAutoPr = (job) => job.trigger === 'auto_pr'
+
 function JobCard({ job }) {
   const hasResults = job.status === 'completed' && job.results?.length > 0
+  const auto = isAutoPr(job)
+  const borderColor = auto ? 'border-purple-700/60' : 'border-slate-700'
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3">
+    <div className={`bg-slate-800 border ${borderColor} rounded-xl p-4 space-y-3`}>
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
+          {/* Auto PR badge */}
+          {auto && (
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 text-purple-300 text-[10px] font-medium rounded-full border border-purple-500/30">
+                <GitPullRequest size={10} /> PR #{job.pr_number} · auto-scan
+              </span>
+            </div>
+          )}
           <div className="text-sm font-medium text-slate-200 truncate font-mono">
-            {job.repos.map(repoShort).join(', ')}
+            {auto && job.pr_title
+              ? job.pr_title
+              : job.repos.map(repoShort).join(', ')}
           </div>
           <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
             <Clock size={11} />
             {timeAgo(job.created_at)}
-            {job.current_repo && job.repos.length > 1 && (
+            {auto && job.pr_author && (
+              <span className="text-slate-600">· by {job.pr_author}</span>
+            )}
+            {!auto && job.current_repo && job.repos.length > 1 && (
               <span className="text-slate-600">· scanning {repoShort(job.current_repo)}</span>
             )}
           </div>
@@ -79,7 +96,7 @@ function JobCard({ job }) {
           <Link
             key={i}
             to={`/report/${encodeURIComponent(filename)}`}
-            className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+            className={`flex items-center gap-1.5 text-xs transition-colors ${auto ? 'text-purple-400 hover:text-purple-300' : 'text-indigo-400 hover:text-indigo-300'}`}
           >
             <CheckCircle2 size={12} />
             View report for {repoShort(r.repo_url)}

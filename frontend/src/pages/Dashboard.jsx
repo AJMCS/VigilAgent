@@ -2,6 +2,7 @@ import { useState } from 'react'
 import ProfileManager, { useProfiles } from '../components/ProfileManager'
 import ScanForm from '../components/ScanForm'
 import JobMonitor from '../components/JobMonitor'
+import WatchlistManager from '../components/WatchlistManager'
 
 export default function Dashboard() {
   const { profiles, addProfile, removeProfile } = useProfiles()
@@ -10,7 +11,7 @@ export default function Dashboard() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6">
-        {/* Left column: profiles + scan form */}
+        {/* Left column: profiles + scan form + watchlist */}
         <div className="space-y-4">
           <ProfileManager
             profiles={profiles}
@@ -23,6 +24,10 @@ export default function Dashboard() {
             profiles={profiles}
             selectedProfileId={selectedProfileId}
             onSelectProfile={setSelectedProfileId}
+          />
+          <WatchlistManager
+            profiles={profiles}
+            selectedProfileId={selectedProfileId}
           />
         </div>
 
