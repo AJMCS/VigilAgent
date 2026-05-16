@@ -50,8 +50,8 @@ Be precise, actionable, and avoid false positives. If a tool returned no finding
 
 def synthesize_report(repo_url: str, scan_results: dict) -> dict:
     client = OpenAI(
-        api_key=settings.nvidia_api_key,
-        base_url=settings.nvidia_base_url,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
     )
 
     prompt = _build_prompt(repo_url, scan_results)

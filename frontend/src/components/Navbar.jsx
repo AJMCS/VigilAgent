@@ -41,7 +41,7 @@ export default function Navbar() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-slate-600 font-mono">nvidia/nemotron-3-super-120b-a12b</span>
+          <span className="text-xs text-slate-600 font-mono">nemotron-super (local)</span>
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="API online" />
         </div>
       </div>

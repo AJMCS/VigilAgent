@@ -3,10 +3,11 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    nvidia_api_key: str
-    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    primary_model: str = "nvidia/nemotron-3-super-120b-a12b"
-    subagent_model: str = "nvidia/nemotron-3-nano-30b-a3b"
+    # Local LLM via Ollama (OpenAI-compatible endpoint)
+    llm_base_url: str = "http://localhost:11434/v1"
+    llm_api_key: str = "ollama"   # Ollama ignores this; OpenAI client requires it
+    primary_model: str = "nemotron-super"
+    subagent_model: str = "nemotron-mini"
 
     github_client_id: str = ""
     github_client_secret: str = ""
