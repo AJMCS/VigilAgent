@@ -1,0 +1,31 @@
+allow:
+  filesystem:
+    - ~/vigilagent/repos/**
+    - ~/vigilagent/reports/**
+  network:
+    - api.github.com
+    - integrate.api.nvidia.com
+    - build.nvidia.com
+  shell:
+    - git clone
+    - git rev-parse
+    - semgrep
+    - bandit
+    - pip-audit
+    - npm audit
+    - gitleaks
+    - trufflehog
+
+deny:
+  filesystem:
+    - ~/.ssh/**
+    - ~/.aws/**
+    - ~/passwords/**
+    - /etc/**
+    - /var/**
+  shell:
+    - rm -rf
+    - sudo
+    - chmod 777
+    - curl | bash
+    - wget | bash

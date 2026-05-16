@@ -1,0 +1,30 @@
+# API & orchestration
+fastapi==0.115.5
+pydantic-settings==2.6.1
+uvicorn[standard]==0.32.1
+pydantic==2.9.2
+python-dotenv==1.0.1
+httpx==0.27.2
+
+# LangGraph / LangChain
+langgraph==0.2.57
+langchain-core==0.3.25
+langchain-openai==0.2.12
+
+# OpenAI-compatible client (used for NVIDIA NIM endpoint)
+openai==1.57.2
+
+# GitHub API
+PyGithub==2.4.0
+
+# Async utilities
+anyio==4.7.0
+
+# Scan tools (CLIs installed separately via Dockerfile)
+# semgrep, gitleaks, trufflehog, bandit, pip-audit, npm audit
+
+# Report generation
+jinja2==3.1.4
+
+# Logging / observability
+structlog==24.4.0
