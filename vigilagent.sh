@@ -107,7 +107,11 @@ fi
 echo -e "${GREEN}✅  Model '$MODEL' ready${NC}"
 echo ""
 
-# ── 3. Python venv — create + install if missing ───────────────────────────────
+# ── 3. Clear any stale processes on our ports ─────────────────────────────────
+fuser -k 8000/tcp > /dev/null 2>&1 && echo -e "    ${YELLOW}Cleared stale process on port 8000${NC}"
+fuser -k 5173/tcp > /dev/null 2>&1 && echo -e "    ${YELLOW}Cleared stale process on port 5173${NC}"
+
+# ── 5. Python venv — create + install if missing ───────────────────────────────
 if [ ! -d ".venv" ]; then
     echo -e "📦  No virtualenv found — creating and installing Python dependencies…"
     python3 -m venv .venv
