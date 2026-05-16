@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     # Local LLM via Ollama (OpenAI-compatible endpoint)
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"   # Ollama ignores this; OpenAI client requires it
-    primary_model: str = "nemotron-mini"
+    primary_model: str = "nemotron-3-super"
     subagent_model: str = "nemotron-mini"
 
     github_client_id: str = ""
