@@ -20,8 +20,10 @@ PyGithub==2.4.0
 # Async utilities
 anyio==4.7.0
 
-# Scan tools (CLIs installed separately via Dockerfile)
-# semgrep, gitleaks, trufflehog, bandit, pip-audit, npm audit
+# Scan tools
+semgrep
+bandit
+pip-audit
 
 # Report generation
 jinja2==3.1.4
