@@ -14,7 +14,8 @@ export function useProfiles() {
   }
 
   const addProfile = (name, token) => {
-    save([...profiles, { id: crypto.randomUUID(), name, token }])
+    const id = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    save([...profiles, { id, name, token }])
   }
 
   const removeProfile = (id) => save(profiles.filter(p => p.id !== id))
