@@ -1,18 +1,22 @@
 """Static analysis: semgrep + bandit."""
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+# Resolve tools from the same bin directory as the running Python interpreter.
+# This works whether the process was launched from an activated venv or not.
+_BIN = Path(sys.executable).parent
+
+
+def _bin(name: str) -> str:
+    p = _BIN / name
+    return str(p) if p.exists() else name
 
 
 def run_semgrep(repo_path: str) -> dict:
     result = subprocess.run(
-        [
-            "semgrep",
-            "--config", "auto",
-            "--json",
-            "--quiet",
-            repo_path,
-        ],
+        [_bin("semgrep"), "--config", "auto", "--json", "--quiet", repo_path],
         capture_output=True,
         text=True,
         timeout=300,
@@ -32,17 +36,11 @@ def run_semgrep(repo_path: str) -> dict:
 
 def run_bandit(repo_path: str) -> dict:
     result = subprocess.run(
-        [
-            "bandit",
-            "-r", repo_path,
-            "-f", "json",
-            "-q",
-        ],
+        [_bin("bandit"), "-r", repo_path, "-f", "json", "-q"],
         capture_output=True,
         text=True,
         timeout=180,
     )
-    # bandit exits non-zero when it finds issues — that's expected
     try:
         data = json.loads(result.stdout)
         findings = data.get("results", [])
@@ -60,7 +58,6 @@ def scan_static(repo_path: str) -> dict:
     path = Path(repo_path)
     semgrep = run_semgrep(str(path))
 
-    # Only run bandit if there's Python in the repo
     py_files = list(path.rglob("*.py"))
     bandit = run_bandit(str(path)) if py_files else {"tool": "bandit", "findings": [], "error": None}
 

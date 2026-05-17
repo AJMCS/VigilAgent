@@ -1,7 +1,15 @@
 """Dependency vulnerability scanning: pip-audit + npm audit."""
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+_BIN = Path(sys.executable).parent
+
+
+def _bin(name: str) -> str:
+    p = _BIN / name
+    return str(p) if p.exists() else name
 
 
 def run_pip_audit(repo_path: str) -> dict:
@@ -12,9 +20,9 @@ def run_pip_audit(repo_path: str) -> dict:
         return {"tool": "pip-audit", "findings": [], "error": None, "skipped": True}
 
     result = subprocess.run(
-        ["pip-audit", "--format", "json", "-r", str(req_files[0])]
+        [_bin("pip-audit"), "--format", "json", "-r", str(req_files[0])]
         if req_files
-        else ["pip-audit", "--format", "json"],
+        else [_bin("pip-audit"), "--format", "json"],
         capture_output=True,
         text=True,
         timeout=180,
