@@ -6,14 +6,14 @@ class Settings(BaseSettings):
     # Local LLM via Ollama (OpenAI-compatible endpoint)
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"   # Ollama ignores this; OpenAI client requires it
-    primary_model: str = "nemotron-3-super"
-    subagent_model: str = "nemotron-mini"
+    primary_model: str = "nemotron3-nano:30b"
+    subagent_model: str = "nemotron3-nano:30b"
 
     github_client_id: str = ""
     github_client_secret: str = ""
 
-    repos_dir: Path = Path("/root/vigilagent/repos")
-    reports_dir: Path = Path("/root/vigilagent/reports")
+    repos_dir: Path = Path(__file__).resolve().parent.parent / "repos"
+    reports_dir: Path = Path(__file__).resolve().parent.parent / "reports"
 
     hardware_target: str = "dev"
     gpu_device: int = 0

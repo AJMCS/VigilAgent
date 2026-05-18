@@ -94,7 +94,7 @@ else
 fi
 
 # Pull the model if it isn't already downloaded
-MODEL="nemotron-3-super"
+MODEL="nemotron3-nano:30b"
 if ! ollama list 2>/dev/null | grep -q "$MODEL"; then
     echo -e "    ${YELLOW}Model '$MODEL' not found — pulling now (first run only)…${NC}"
     if ! ollama pull "$MODEL"; then

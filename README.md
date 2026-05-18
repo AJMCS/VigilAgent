@@ -1,13 +1,13 @@
 # VigilAgent
 
-Autonomous GitHub security auditing agent built for the NVIDIA/ASUS 24-hour hackathon. Accepts a list of GitHub repositories, runs a full security scan pipeline, and synthesizes findings into a structured report — end to end, no human intervention required.
+Security audit pipeline for GitHub repositories. Accepts a repo URL, runs a suite of CLI scanning tools, then feeds all findings to a local LLM to synthesize a structured report — end to end, no human intervention required.
 
 ---
 
 ## How it works
 
 ```
-User: GitHub token + repo URLs
+User: GitHub token + repo URL
           │
           ▼
     ┌─────────────┐
@@ -16,18 +16,20 @@ User: GitHub token + repo URLs
            │
            ▼
     ┌─────────────────────────────────────────────────┐
-    │  LangGraph Orchestrator (agent/orchestrator.py) │
+    │  LangGraph Pipeline (agent/orchestrator.py)     │
     │                                                 │
-    │  Agent 1 → clone repo (sandboxed)               │
-    │  Agent 2 → semgrep + bandit (static analysis)   │
-    │  Agent 3 → pip-audit + npm audit (deps)         │
-    │  Agent 4 → gitleaks + trufflehog (secrets)      │
-    │  Agent 5 → Nemotron synthesis → report JSON     │
+    │  Step 1 → git clone into sandbox               │
+    │  Step 2 → semgrep + bandit (static analysis)   │
+    │  Step 3 → pip-audit + npm audit (deps)         │
+    │  Step 4 → gitleaks + trufflehog (secrets)      │
+    │  Step 5 → LLM synthesizes findings → report    │
     └─────────────────────────────────────────────────┘
            │
            ▼
-    reports/<repo>_<timestamp>.json   (sandbox output)
+    reports/<repo>_<timestamp>.json
 ```
+
+Steps 1–4 are plain Python functions that shell out to their respective CLI tools. No LLM is involved until Step 5, where all collected results are passed to `nemotron3-nano:30b` running locally via Ollama to generate the final report.
 
 ---
 
@@ -35,12 +37,10 @@ User: GitHub token + repo URLs
 
 | Layer | Technology |
 |---|---|
-| Agent runtime | LangGraph `StateGraph` |
-| Primary model | `nemotron-super` via Ollama (local) |
-| Sub-agent model | `nemotron-mini` via Ollama (local) |
+| Pipeline runtime | LangGraph `StateGraph` (sequential) |
+| Report model | `nemotron3-nano:30b` via Ollama (local) |
 | API | FastAPI + Uvicorn |
 | Frontend | React + Vite dashboard |
-| Sandbox policy | NemoClaw + OpenShell YAML |
 | Static analysis | semgrep, bandit |
 | Dependency audit | pip-audit, npm audit |
 | Secret detection | gitleaks, trufflehog |
@@ -53,24 +53,25 @@ User: GitHub token + repo URLs
 VigilAgent/
 ├── agent/
 │   ├── config.py           # Pydantic settings, reads .env
-│   ├── orchestrator.py     # LangGraph pipeline (5 agents)
+│   ├── orchestrator.py     # LangGraph pipeline (5 steps)
 │   └── tools/
-│       ├── clone.py        # Agent 1: git clone into sandbox
-│       ├── scan_static.py  # Agent 2: semgrep + bandit
-│       ├── scan_deps.py    # Agent 3: pip-audit + npm audit
-│       ├── scan_secrets.py # Agent 4: gitleaks + trufflehog
-│       └── report.py       # Agent 5: Nemotron synthesis via Ollama
+│       ├── clone.py        # Step 1: git clone into sandbox
+│       ├── scan_static.py  # Step 2: semgrep + bandit
+│       ├── scan_deps.py    # Step 3: pip-audit + npm audit
+│       ├── scan_secrets.py # Step 4: gitleaks + trufflehog
+│       └── report.py       # Step 5: LLM synthesis via Ollama
 ├── api/
 │   └── main.py             # FastAPI endpoints
 ├── frontend/
 │   └── src/                # React dashboard
 ├── policies/
-│   └── vigilagent.yaml     # NemoClaw sandbox policy
+│   └── vigilagent.yaml     # Sandbox policy
 ├── repos/                  # Sandboxed clone targets (gitignored)
 ├── reports/                # Output JSON reports (gitignored)
 ├── .env                    # Real config — never commit
 ├── .env.example            # Template — safe to commit
-├── vigilagent.sh           # Single-command launcher
+├── vigilagent.sh           # Launcher (Linux / macOS)
+├── vigilagent.ps1          # Launcher (Windows)
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt
@@ -78,9 +79,40 @@ VigilAgent/
 
 ---
 
-## Fresh Clone Quickstart (GX10 / Linux)
+## Quickstart — Windows
 
-### 1. Install system prerequisites
+### 1. Install prerequisites
+
+- [Python 3.11+](https://www.python.org/downloads/)
+- [Node.js + npm](https://nodejs.org/)
+- [Git](https://git-scm.com/)
+- [Ollama for Windows](https://ollama.com/download/windows)
+- gitleaks — download the Windows binary from [gitleaks releases](https://github.com/gitleaks/gitleaks/releases) and add it to your PATH
+- trufflehog — download the Windows binary from [trufflehog releases](https://github.com/trufflesecurity/trufflehog/releases) and add it to your PATH
+
+### 2. Pull the model
+
+```powershell
+ollama pull nemotron3-nano:30b
+```
+
+### 3. Clone and launch
+
+```powershell
+git clone <this-repo>
+cd VigilAgent
+.\vigilagent.ps1
+```
+
+On first run the script will create `.env`, set up the Python virtualenv, install frontend dependencies, and start both services.
+
+> If PowerShell blocks the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once first.
+
+---
+
+## Quickstart — Linux / macOS
+
+### 1. Install prerequisites
 
 ```bash
 # Python, Node, git
@@ -98,32 +130,19 @@ curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scr
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### 2. Pull the Nemotron model
+### 2. Pull the model
 
 ```bash
-ollama pull nemotron-super
+ollama pull nemotron3-nano:30b
 ```
 
-> This downloads the model weights. May take a few minutes on first run.
-
-### 3. Clone the repo and launch
+### 3. Clone and launch
 
 ```bash
 git clone <this-repo>
 cd VigilAgent
 ./vigilagent.sh
 ```
-
-That's it. On first run the script automatically:
-- Creates `.env` from `.env.example` if it doesn't exist
-- Starts Ollama if it isn't running
-- Pulls `nemotron-super` if the model isn't downloaded yet
-- Creates the Python virtualenv and installs dependencies
-- Installs frontend Node modules
-- Starts the FastAPI backend (port 8000) and Vite frontend (port 5173)
-- Prints the LAN URLs you can open from any device on the same network
-
-> If you need custom paths (e.g. non-root user), edit `.env` after the first run.
 
 Press `Ctrl+C` to stop all services cleanly.
 
@@ -181,37 +200,24 @@ docker-compose up --build
 - Frontend → `http://localhost:5173`
 - Report files persist in named Docker volumes across restarts.
 
+> Docker uses Linux-native binaries for gitleaks and trufflehog. For Windows development, run natively with `vigilagent.ps1` instead.
+
 ---
 
 ## Sandbox policy
 
-All filesystem access is enforced by `policies/vigilagent.yaml`:
+All filesystem access is defined by `policies/vigilagent.yaml`:
 
-- Repos cloned only into `~/vigilagent/repos/`
-- Reports written only to `~/vigilagent/reports/`
+- Repos cloned only into the configured `repos/` directory
+- Reports written only to the configured `reports/` directory
 - SSH keys, AWS credentials, and password files explicitly denied
 - `rm -rf` and `sudo` blocked at the shell level
-
----
-
-## Deploying to ASUS Ascent GX10
-
-All hardware-specific config lives in `.env`:
-
-```env
-HARDWARE_TARGET=ascent_gx10
-GPU_DEVICE=0
-REPOS_DIR=/root/vigilagent/repos
-REPORTS_DIR=/root/vigilagent/reports
-```
-
-No code changes required — swap `.env` values and run `./vigilagent.sh`.
 
 ---
 
 ## Development notes
 
 - The in-memory job store (`_jobs` in `api/main.py`) resets on server restart. Swap for Redis for persistence across restarts.
-- The LangGraph pipeline runs agents sequentially. If cloning fails the graph aborts early.
-- Nemotron is called only in the final synthesis step (`agent/tools/report.py`) at `temperature=0.2`.
+- The LangGraph pipeline runs steps sequentially. If cloning fails, the graph aborts early and skips remaining steps.
+- The LLM is called only in the final synthesis step (`agent/tools/report.py`) at `temperature=0.2`.
 - The `.venv/` and `.env` files are gitignored — never commit either.
