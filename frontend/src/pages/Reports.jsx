@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { listReports, getReport } from '../api';
 import ReportViewer from '../components/ReportViewer';
 import SeverityBadge from '../components/ui/SeverityBadge';
+import GlobalReportChat from '../components/GlobalReportChat';
 
 function parseFilename(name) {
   const m1 = name.match(/^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})\.json$/);
@@ -13,9 +14,41 @@ function parseFilename(name) {
   return { repo: name.replace(/\.json$/, ''), date: '', time: '', display: '' };
 }
 
+const SIDEBAR_MIN     = 180;
+const SIDEBAR_MAX     = 480;
+const SIDEBAR_DEFAULT = 260;
+
 export default function Reports() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [activeRepo, setActiveRepo]     = useState(null);
+
+  // Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    parseInt(localStorage.getItem('vigilagent-reports-sidebar-width') || String(SIDEBAR_DEFAULT), 10)
+  );
+  const isDragging = useRef(false);
+  const dragStart  = useRef({ x: 0, w: SIDEBAR_DEFAULT });
+
+  const onDragMouseDown = useCallback((e) => {
+    e.preventDefault();
+    isDragging.current = true;
+    dragStart.current  = { x: e.clientX, w: sidebarWidth };
+
+    const onMove = (e) => {
+      if (!isDragging.current) return;
+      const newW = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, dragStart.current.w + e.clientX - dragStart.current.x));
+      setSidebarWidth(newW);
+    };
+    const onUp = (e) => {
+      isDragging.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const newW = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, dragStart.current.w + e.clientX - dragStart.current.x));
+      localStorage.setItem('vigilagent-reports-sidebar-width', String(newW));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [sidebarWidth]);
 
   const { data: files = [], isLoading } = useQuery({
     queryKey: ['reports'],
@@ -66,7 +99,7 @@ export default function Reports() {
       {/* ── Left panel: project + report list ──────────────────────────────── */}
       <div
         className="flex flex-col shrink-0 no-print"
-        style={{ width: 260, borderRight: '1px solid rgba(0,240,255,0.1)', overflowY: 'auto' }}
+        style={{ width: sidebarWidth, borderRight: '1px solid rgba(0,240,255,0.1)', overflowY: 'auto' }}
       >
         {/* Project list */}
         <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(0,240,255,0.1)', color: '#00f0ff', fontSize: 10, fontWeight: 700, letterSpacing: '0.15em' }}>
@@ -128,13 +161,19 @@ export default function Reports() {
         )}
       </div>
 
-      {/* ── Right panel: inline report view ────────────────────────────────── */}
+      {/* ── Drag handle ─────────────────────────────────────────────────────── */}
+      <div
+        onMouseDown={onDragMouseDown}
+        className="shrink-0 transition-colors duration-150 no-print"
+        style={{ width: 5, cursor: 'col-resize', background: 'rgba(0,240,255,0.08)', borderLeft: '1px solid rgba(0,240,255,0.08)', borderRight: '1px solid rgba(0,240,255,0.08)' }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,240,255,0.25)'; }}
+        onMouseLeave={e => { if (!isDragging.current) e.currentTarget.style.background = 'rgba(0,240,255,0.08)'; }}
+      />
+
+      {/* ── Right panel: report viewer or global analytics chat ─────────────── */}
       <div className="flex-1 overflow-y-auto relative">
         {!selectedFile ? (
-          <div className="flex flex-col items-center justify-center h-full" style={{ color: 'rgba(0,240,255,0.2)', gap: 12 }}>
-            <div style={{ fontSize: 36 }}>◉</div>
-            <div style={{ fontSize: 12 }}>Select a report to view it here</div>
-          </div>
+          <GlobalReportChat totalReports={files.length} />
         ) : reportLoading ? (
           <div className="flex items-center justify-center h-full" style={{ color: 'rgba(0,240,255,0.4)', fontSize: 12 }} >
             <span className="animate-pulse">// loading report...</span>
@@ -147,6 +186,15 @@ export default function Reports() {
               style={{ background: 'rgba(10,10,10,0.97)', borderBottom: '1px solid rgba(0,240,255,0.12)', backdropFilter: 'blur(6px)' }}
             >
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedFile(null)}
+                  className="transition-all duration-150"
+                  style={{ color: 'rgba(0,240,255,0.45)', fontSize: 9, letterSpacing: '0.1em', background: 'transparent', border: '1px solid rgba(0,240,255,0.2)', padding: '1px 7px', fontFamily: 'inherit', cursor: 'pointer' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#00f0ff'; e.currentTarget.style.borderColor = 'rgba(0,240,255,0.5)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(0,240,255,0.45)'; e.currentTarget.style.borderColor = 'rgba(0,240,255,0.2)'; }}
+                >
+                  ◁ OVERVIEW
+                </button>
                 {overallSeverity && <SeverityBadge severity={overallSeverity.toLowerCase()} />}
                 <span style={{ color: 'rgba(0,240,255,0.5)', fontSize: 10 }}>
                   {selectedFile}

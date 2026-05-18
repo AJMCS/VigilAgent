@@ -176,13 +176,13 @@ async def _run_pipeline(
     pr_meta: dict | None = None,
 ) -> None:
     job = _jobs[job_id]
-    job["status"] = "running"
-    results = []
+    job["status"]  = "running"
+    job["results"] = []   # expose list immediately so partial results are visible
 
     for repo_url in repos:
         job["current_repo"] = repo_url
-        job["agents_done"] = []
-        repo_result = {"repo_url": repo_url, "success": True, "error": None, "report": {}}
+        job["agents_done"]  = []
+        repo_result = {"repo_url": repo_url, "success": True, "error": None, "report": {}, "filename": None}
 
         try:
             _set_agent(job, "clone")
@@ -190,7 +190,7 @@ async def _run_pipeline(
             clone_result = await asyncio.to_thread(clone_repo, github_token, repo_url, branch)
             if not clone_result["success"]:
                 repo_result.update(success=False, error=f"Clone failed: {clone_result['error']}")
-                results.append(repo_result)
+                job["results"].append(repo_result)
                 continue
 
             repo_path = clone_result["path"]
@@ -210,8 +210,9 @@ async def _run_pipeline(
                 "dependency_audit": deps_result,
                 "secret_scan": secrets_result,
             }
-            report = await asyncio.to_thread(synthesize_report, repo_url, scan_results, repo_path)
-            repo_result["report"] = report
+            report, report_filename = await asyncio.to_thread(synthesize_report, repo_url, scan_results, repo_path)
+            repo_result["report"]   = report
+            repo_result["filename"] = report_filename
 
             # Post PR comment if this was auto-triggered
             if pr_meta and report:
@@ -231,14 +232,13 @@ async def _run_pipeline(
             log.error("scan error", job_id=job_id, repo=repo_url, error=str(exc))
             repo_result.update(success=False, error=str(exc))
 
-        results.append(repo_result)
+        job["results"].append(repo_result)
 
     job.update(
         status="completed",
         current_agent=None,
         current_repo=None,
         agents_done=PIPELINE_STEPS,
-        results=results,
     )
     log.info("job complete", job_id=job_id)
 
@@ -450,10 +450,15 @@ class ReportFindings(BaseModel):
     secret_detection: list[SecretFinding] = []
 
 class AiSynthesis(BaseModel):
+    model_config = {"extra": "allow"}
     executive_summary: str = ""
     critical_actions: list[str] = []
     risk_assessment: str = ""
     recommended_priority_order: list[str] = []
+    single_most_important_action: str = ""
+    finding_relationships: list[dict] = []
+    scan_coverage_gaps: list[str] = []
+    clean_repo_context: str = ""
 
 class SecurityReport(BaseModel):
     model_config = {"extra": "allow"}
@@ -502,6 +507,57 @@ def health() -> dict:
         "watching": len(_load_watchlist()),
         "poll_interval_seconds": settings.poll_interval_seconds,
     }
+
+
+# ── Model management ──────────────────────────────────────────────────────────
+
+class ModelSelectRequest(BaseModel):
+    model: str
+
+_OLLAMA_BASE = re.sub(r"/v1/?$", "", str(settings.llm_base_url)).rstrip("/")
+
+@app.get("/models")
+async def list_models() -> dict:
+    """Return all locally installed Ollama models plus the currently active one."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{_OLLAMA_BASE}/api/tags")
+            r.raise_for_status()
+        raw = r.json().get("models", [])
+        models = [
+            {
+                "name":          m["name"],
+                "size_gb":       round(m.get("size", 0) / 1_000_000_000, 1),
+                "parameter_size": m.get("details", {}).get("parameter_size", ""),
+                "quantization":   m.get("details", {}).get("quantization_level", ""),
+                "modified_at":    m.get("modified_at", ""),
+            }
+            for m in raw
+        ]
+        return {"models": models, "current": settings.primary_model}
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Ollama is not running at the configured URL")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Cannot reach Ollama: {exc}")
+
+
+@app.post("/models/select")
+async def select_model(body: ModelSelectRequest) -> dict:
+    """Switch the active model at runtime and persist the choice to .env."""
+    settings.primary_model = body.model
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    try:
+        if env_path.exists():
+            content = env_path.read_text(encoding="utf-8")
+            if re.search(r"^PRIMARY_MODEL=", content, re.MULTILINE):
+                content = re.sub(r"^PRIMARY_MODEL=.*$", f"PRIMARY_MODEL={body.model}", content, flags=re.MULTILINE)
+            else:
+                content += f"\nPRIMARY_MODEL={body.model}\n"
+            env_path.write_text(content, encoding="utf-8")
+    except Exception as exc:
+        log.warning("failed to persist model to .env", error=str(exc))
+    log.info("model switched", model=body.model)
+    return {"model": settings.primary_model}
 
 
 @app.post("/scan", response_model=JobStatus, status_code=status.HTTP_202_ACCEPTED)
@@ -606,6 +662,75 @@ def remove_watch(owner: str, repo: str) -> None:
 
 # ── Reports endpoints ─────────────────────────────────────────────────────────
 
+@app.post("/reports/global-chat")
+async def global_report_chat(body: ChatRequest) -> dict:
+    """Chat that queries across all reports for trend and aggregate questions."""
+    summaries = []
+    try:
+        settings.reports_dir.mkdir(parents=True, exist_ok=True)
+        for f in sorted(settings.reports_dir.glob("*.json"), reverse=True):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                meta    = data.get("meta", {})
+                summary = data.get("summary", {})
+                summaries.append({
+                    "filename":          f.name,
+                    "repo":              meta.get("repo", ""),
+                    "branch":            meta.get("branch", ""),
+                    "commit":            meta.get("commit", ""),
+                    "scanned_at":        meta.get("scanned_at", ""),
+                    "overall_severity":  summary.get("overall_severity", "UNKNOWN"),
+                    "total_findings":    summary.get("total_findings", 0),
+                    "by_severity":       summary.get("by_severity", {}),
+                    "by_category":       summary.get("by_category", {}),
+                    "top_priority_finding": summary.get("top_priority_finding", ""),
+                })
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    summaries_json = json.dumps(summaries, indent=2)
+    if len(summaries_json) > 14000:
+        summaries_json = summaries_json[:14000] + "\n... [truncated — too many reports to fit in context]"
+
+    system = (
+        f"You are VigilAgent, a security analytics assistant helping a software team understand "
+        f"their aggregate security posture across all repositories and over time.\n\n"
+        f"Today's date: {today}\n"
+        f"Total reports in database: {len(summaries)}\n\n"
+        f"REPORT INDEX (summary of every scan, newest first):\n"
+        f"{summaries_json}\n\n"
+        f"Guidelines for answering:\n"
+        f"- Use 'scanned_at' for date-range questions (last N days, last month, etc.)\n"
+        f"- Branches other than 'main'/'master'/'develop' are likely PR/feature branches\n"
+        f"- PR author identity is not stored in reports — branch names may hint at it but are unreliable\n"
+        f"- 'by_severity': critical, high, medium, low counts per scan\n"
+        f"- 'by_category': static_analysis, dependency_audit, secret_detection counts per scan\n"
+        f"- Show your working when aggregating counts (e.g. list which scans contributed)\n"
+        f"- For detailed questions about a specific scan, suggest the user open that report in the viewer\n"
+        f"- Be precise with numbers and dates. Acknowledge if data is incomplete or ambiguous."
+    )
+
+    messages = [{"role": "system", "content": system}]
+    messages.extend(body.history)
+    messages.append({"role": "user", "content": body.question})
+
+    from openai import OpenAI as _OpenAI
+    client = _OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+
+    response = await asyncio.to_thread(
+        lambda: client.chat.completions.create(
+            model=settings.primary_model,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=2048,
+        )
+    )
+    return {"answer": response.choices[0].message.content}
+
+
 @app.get("/reports")
 def list_reports() -> list[dict]:
     try:
@@ -652,23 +777,40 @@ async def chat_with_report(filename: str, body: ChatRequest) -> dict:
         synthesis = report.get("ai_synthesis", {})
         repo_url  = meta.get("repo", "unknown")
         scanned   = meta.get("scanned_at", "unknown")
+        total     = summary.get("total_findings", 0)
         findings_json = json.dumps(findings, indent=2)
-        if len(findings_json) > 6000:
-            findings_json = findings_json[:6000] + "\n... [truncated]"
+        if len(findings_json) > 10000:
+            findings_json = findings_json[:10000] + "\n... [truncated]"
+        relationships_json = json.dumps(synthesis.get("finding_relationships", []))
+        coverage_gaps = "; ".join(synthesis.get("scan_coverage_gaps", [])) or "none recorded"
         system = (
-            f"You are VigilAgent, a security expert assistant helping a developer understand "
-            f"a security audit report.\n\n"
-            f"Repository: {repo_url}\n"
+            f"You are VigilAgent, a security expert assistant helping a software engineer understand "
+            f"a security audit report for {repo_url}.\n\n"
+            f"REPORT CONTEXT:\n"
             f"Scanned at: {scanned}\n"
             f"Overall severity: {summary.get('overall_severity', 'UNKNOWN')}\n"
-            f"Total findings: {summary.get('total_findings', 0)}\n\n"
-            f"AI SYNTHESIS:\n"
+            f"Total findings: {total}\n\n"
+            f"PRE-COMPUTED ANALYSIS:\n"
             f"Executive summary: {synthesis.get('executive_summary', '')}\n"
-            f"Risk assessment: {synthesis.get('risk_assessment', '')}\n\n"
-            f"STRUCTURED FINDINGS (JSON — cite id, file, line, description when answering):\n"
+            f"Risk assessment: {synthesis.get('risk_assessment', '')}\n"
+            f"Most important action: {synthesis.get('single_most_important_action', '')}\n"
+            f"Priority order: {'; '.join(synthesis.get('recommended_priority_order', []))}\n"
+            f"Finding relationships: {relationships_json}\n"
+            f"Scan coverage gaps: {coverage_gaps}\n"
+            + (f"Clean repo context: {synthesis.get('clean_repo_context', '')}\n" if total == 0 else "")
+            + f"\nSTRUCTURED FINDINGS (each finding includes attack_scenario, blast_radius, "
+            f"false_positive_likelihood, false_positive_reasoning, and verification_steps):\n"
             f"{findings_json}\n\n"
-            f"Answer questions based only on the findings above. "
-            f"Cite specific finding IDs, files, line numbers, or CVEs. Be concise and actionable."
+            f"When answering:\n"
+            f"- Cite finding IDs (SA-001, DA-001…), file paths, and line numbers\n"
+            f"- For 'how would an attacker exploit this?' → use attack_scenario\n"
+            f"- For 'what is the blast radius / impact?' → use blast_radius\n"
+            f"- For 'is this a false positive?' → use false_positive_likelihood + false_positive_reasoning\n"
+            f"- For 'how do I test my fix?' → use verification_steps\n"
+            f"- For 'are any findings related?' → use finding_relationships\n"
+            f"- For 'what did the scan miss?' → use scan_coverage_gaps\n"
+            f"- For 'is my repo secure?' (no findings) → use clean_repo_context\n"
+            f"- Be concise and actionable — you are talking to a developer, not a security analyst"
         )
     else:
         # Legacy markdown report
@@ -696,7 +838,7 @@ async def chat_with_report(filename: str, body: ChatRequest) -> dict:
             model=settings.primary_model,
             messages=messages,
             temperature=0.3,
-            max_tokens=1024,
+            max_tokens=2048,
         )
     )
     return {"answer": response.choices[0].message.content}

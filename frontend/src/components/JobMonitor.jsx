@@ -26,15 +26,62 @@ const STATUS_COLOR = {
   cancelled: '#666666',
 };
 
+function RepoRow({ repoUrl, job }) {
+  const results    = job.results || [];
+  const result     = results.find(r => r.repo_url === repoUrl);
+  const isCurrent  = job.status === 'running' && job.current_repo === repoUrl;
+  const isDone     = !!result;
+  const isQueued   = !isDone && !isCurrent;
+
+  const labelColor = isDone
+    ? (result.success ? '#00ff88' : '#ff4444')
+    : isCurrent ? '#00f0ff'
+    : 'rgba(0,240,255,0.28)';
+
+  const stateLabel = isDone
+    ? (result.success ? '✓ DONE' : '✕ FAILED')
+    : isCurrent ? '⟳ SCANNING'
+    : '○ QUEUED';
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <StatusDot active={isCurrent} blue={isCurrent} size={5} />
+        <span style={{ color: labelColor, fontSize: 11 }}>// {repoShort(repoUrl)}</span>
+        <span style={{ color: labelColor, fontSize: 9, letterSpacing: '0.1em', opacity: isQueued ? 0.5 : 1 }}>
+          {stateLabel}
+        </span>
+        {isDone && result.success && result.filename && (
+          <Link
+            to="/reports"
+            className="transition-all duration-150"
+            style={{ color: '#00ff88', fontSize: 9, letterSpacing: '0.08em', border: '1px solid rgba(0,255,136,0.3)', padding: '0px 5px', background: 'rgba(0,255,136,0.06)', textDecoration: 'none' }}
+            onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 0 6px rgba(0,255,136,0.3)'; }}
+            onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; }}
+          >
+            VIEW ↗
+          </Link>
+        )}
+        {isDone && !result.success && result.error && (
+          <span style={{ color: '#ff4444', fontSize: 9, opacity: 0.8 }}>{result.error.slice(0, 60)}</span>
+        )}
+      </div>
+      {/* Show pipeline steps inline for the currently-scanning repo */}
+      {isCurrent && (
+        <div className="pl-4">
+          <PipelineSteps currentAgent={job.current_agent} agentsDone={job.agents_done || []} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function JobCard({ job }) {
   const [cancelling, setCancelling] = useState(false);
-  const qc = useQueryClient();
+  const qc      = useQueryClient();
   const isActive = ['queued','running'].includes(job.status);
   const color    = STATUS_COLOR[job.status] || '#888';
-  // Support both new schema (meta.scanned_at) and legacy schema (generated_at)
-  const reports  = (job.results || []).flatMap(r =>
-    (r.report?.meta?.scanned_at || r.report?.generated_at) ? [r] : []
-  );
+  const isMulti  = (job.repos || []).length > 1;
 
   return (
     <NeonCard green={job.status === 'completed'} className="p-3 space-y-2 animate-slide-up">
@@ -48,6 +95,11 @@ function JobCard({ job }) {
           >
             {job.status}
           </span>
+          {isMulti && (
+            <span style={{ color: 'rgba(0,240,255,0.45)', fontSize: 9, letterSpacing: '0.1em' }}>
+              {(job.results || []).length}/{job.repos.length} repos
+            </span>
+          )}
           {isAutoPr(job) && (
             <span className="text-[10px] px-1.5 py-0.5 tracking-wider" style={{ color: '#aa88ff', border: '1px solid rgba(170,136,255,0.3)', background: 'rgba(170,136,255,0.06)' }}>
               PR #{job.pr_number}
@@ -85,55 +137,30 @@ function JobCard({ job }) {
         </div>
       </div>
 
-      {/* Repos */}
-      <div className="space-y-0.5">
+      {/* PR title if auto scan */}
+      {isAutoPr(job) && job.pr_title && (
+        <div style={{ color: '#aa88ff', fontSize: 10 }}>"{job.pr_title}"</div>
+      )}
+
+      {/* Per-repo status rows */}
+      <div className="space-y-2">
         {(job.repos || []).map(u => (
-          <div key={u} style={{ color: '#ccc', fontSize: 11 }}>
-            // {repoShort(u)}
-          </div>
+          <RepoRow key={u} repoUrl={u} job={job} />
         ))}
-        {isAutoPr(job) && job.pr_title && (
-          <div style={{ color: '#aa88ff', fontSize: 10 }}>"{job.pr_title}"</div>
-        )}
       </div>
 
-      {/* Pipeline */}
-      <PipelineSteps currentAgent={job.current_agent} agentsDone={job.agents_done || []} />
+      {/* For single-repo non-active jobs, show pipeline summary */}
+      {!isMulti && !isActive && (job.agents_done || []).length > 0 && (
+        <PipelineSteps currentAgent={null} agentsDone={job.agents_done || []} />
+      )}
 
       {/* Scan progress bar */}
       {job.status === 'running' && <div className="scan-progress" />}
 
-      {/* Error */}
+      {/* Job-level error */}
       {job.status === 'failed' && job.error && (
         <div style={{ color: '#ff4444', fontSize: 10, borderLeft: '2px solid #ff4444', paddingLeft: 8 }}>
           {job.error}
-        </div>
-      )}
-
-      {/* Reports links */}
-      {reports.length > 0 && (
-        <div className="flex flex-wrap gap-1 pt-1" style={{ borderTop: '1px solid rgba(0,240,255,0.1)' }}>
-          {reports.map(r => {
-            const slug = (r.report.repo_url || '').split('/').pop();
-            const ts   = (r.report.generated_at || '').slice(0,10);
-            const fname = `${slug}_${ts}.json`; // best-effort filename
-            return (
-              <Link
-                key={r.repo_url}
-                to={`/reports`}
-                className="text-[10px] tracking-wider transition-all duration-150"
-                style={{
-                  color: '#00ff88',
-                  border: '1px solid rgba(0,255,136,0.25)',
-                  padding: '1px 6px',
-                  background: 'rgba(0,255,136,0.06)',
-                  textDecoration: 'none',
-                }}
-              >
-                VIEW REPORT ↗
-              </Link>
-            );
-          })}
         </div>
       )}
     </NeonCard>

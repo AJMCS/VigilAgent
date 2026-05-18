@@ -52,6 +52,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ question, history }),
     }),
+  globalChat: (question, history) =>
+    request('/reports/global-chat', {
+      method: 'POST',
+      body: JSON.stringify({ question, history }),
+    }),
+  listModels: () => request('/models'),
+  selectModel: (model) => request('/models/select', { method: 'POST', body: JSON.stringify({ model }) }),
   getWatchlist: () => request('/watch'),
   addWatch: (repo_url, github_token) =>
     request('/watch', { method: 'POST', body: JSON.stringify({ repo_url, github_token }) }),
@@ -68,6 +75,9 @@ export const listScans     = () => api.listScans()
 export const listReports   = () => api.listReports()
 export const getReport     = f  => api.getReport(f)
 export const chatWithReport = (f, q, h) => api.chatWithReport(f, q, h)
+export const globalChat     = (q, h)    => api.globalChat(q, h)
+export const listModels    = () => api.listModels()
+export const selectModel   = (m) => api.selectModel(m)
 export const getWatchlist  = () => api.getWatchlist()
 export const addWatch      = ({ repo_url, github_token }) => api.addWatch(repo_url, github_token)
 export const removeWatch   = (owner, repo) => api.removeWatch(owner, repo)

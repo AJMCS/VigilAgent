@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import ReportChat from './ReportChat';
 import SeverityBadge from './ui/SeverityBadge';
 import NeonButton from './ui/NeonButton';
+import InfoTooltip from './ui/InfoTooltip';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,32 @@ function FindingCard({ finding, prefix }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+const SCORING_INFO = (
+  <div>
+    <div style={{ color: '#00f0ff', fontWeight: 700, letterSpacing: '0.08em', marginBottom: 6, fontSize: 11 }}>
+      HOW FINDINGS ARE SCORED
+    </div>
+    <div style={{ marginBottom: 8 }}>
+      Each finding is assigned a severity level. The overall report severity equals the highest severity found.
+    </div>
+    <div style={{ marginBottom: 5 }}>
+      <span style={{ color: '#ff4444', fontWeight: 700 }}>CRITICAL</span> — Exploitable flaws, exposed secrets, or critical CVEs. Fix immediately.
+    </div>
+    <div style={{ marginBottom: 5 }}>
+      <span style={{ color: '#ff8800', fontWeight: 700 }}>HIGH</span> — Serious vulnerabilities with significant risk. Fix before release.
+    </div>
+    <div style={{ marginBottom: 5 }}>
+      <span style={{ color: '#ffcc00', fontWeight: 700 }}>MEDIUM</span> — Moderate risk. Should be addressed soon.
+    </div>
+    <div style={{ marginBottom: 8 }}>
+      <span style={{ color: '#00f0ff', fontWeight: 700 }}>LOW</span> — Minor or informational findings. Fix when convenient.
+    </div>
+    <div style={{ color: 'rgba(0,240,255,0.5)', fontSize: 10, borderTop: '1px solid rgba(0,240,255,0.15)', paddingTop: 6 }}>
+      Findings span 3 categories: <strong style={{ color: '#aa88ff' }}>STATIC</strong> (code patterns &amp; anti-patterns), <strong style={{ color: '#aa88ff' }}>DEPS</strong> (package CVEs), and <strong style={{ color: '#aa88ff' }}>SECRETS</strong> (leaked credentials).
+    </div>
+  </div>
+);
+
 export default function ReportViewer({ report, filename }) {
   const [showChat, setShowChat] = useState(false);
   const [openSections, setOpenSections] = useState({ static: true, deps: true, secrets: true, synthesis: true });
@@ -122,7 +149,7 @@ export default function ReportViewer({ report, filename }) {
           </NeonButton>
           <NeonButton small onClick={handleExport}>↓ EXPORT JSON</NeonButton>
         </div>
-        {showChat && <div className="no-print"><ReportChat filename={filename} /></div>}
+        {showChat && <div className="no-print"><ReportChat filename={filename} totalFindings={0} overallSeverity="unknown" /></div>}
         <div className="p-4 report-body" style={{ border: '1px solid rgba(0,240,255,0.12)', background: '#050505' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}
             components={{ table: ({ node, ...props }) => <div className="table-wrap"><table {...props} /></div> }}>
@@ -163,6 +190,10 @@ export default function ReportViewer({ report, filename }) {
         </div>
 
         {/* Summary counts */}
+        <div className="flex items-center gap-2 mb-2">
+          <span style={{ color: 'rgba(0,240,255,0.4)', fontSize: 9, letterSpacing: '0.12em' }}>FINDINGS SUMMARY</span>
+          <InfoTooltip content={SCORING_INFO} />
+        </div>
         <div className="flex flex-wrap gap-3 items-start">
           <div className="flex flex-col items-center px-4 py-2"
             style={{ border: '1px solid rgba(0,240,255,0.3)', background: 'rgba(0,240,255,0.04)' }}>
@@ -200,7 +231,7 @@ export default function ReportViewer({ report, filename }) {
       </div>
 
       {/* AI Chat */}
-      {showChat && <div className="no-print"><ReportChat filename={filename} /></div>}
+      {showChat && <div className="no-print"><ReportChat filename={filename} totalFindings={summary?.total_findings ?? 0} overallSeverity={sev} /></div>}
 
       {/* ── AI Synthesis ───────────────────────────────────────────────────── */}
       <div>

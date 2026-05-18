@@ -40,6 +40,11 @@ SCHEMA = """{
         "line": 42,
         "description": "what the issue is",
         "recommendation": "how to fix it",
+        "attack_scenario": "1-2 sentence story of how an attacker would actually exploit this specific finding",
+        "blast_radius": "what data, systems, or access is compromised if this is exploited",
+        "false_positive_likelihood": "LOW | MEDIUM | HIGH",
+        "false_positive_reasoning": "brief explanation of why this is or isn't likely a false positive",
+        "verification_steps": ["step to confirm the fix worked", "another verification step"],
         "raw_output": "relevant raw tool output snippet"
       }
     ],
@@ -52,6 +57,11 @@ SCHEMA = """{
         "cve": "CVE-YYYY-NNNNN or empty string",
         "description": "what the vulnerability is",
         "recommendation": "upgrade to version X or workaround",
+        "attack_scenario": "1-2 sentence story of how an attacker would exploit this CVE or vulnerable package",
+        "blast_radius": "what data, systems, or access is compromised if this is exploited",
+        "false_positive_likelihood": "LOW | MEDIUM | HIGH",
+        "false_positive_reasoning": "brief explanation — e.g. known CVE with PoC = LOW, version range mismatch = MEDIUM",
+        "verification_steps": ["run pip-audit or npm audit again after upgrading", "another verification step"],
         "raw_output": "relevant raw tool output snippet"
       }
     ],
@@ -65,6 +75,11 @@ SCHEMA = """{
         "commit": "commit hash or empty string",
         "description": "what was found",
         "recommendation": "revoke immediately, rotate credentials, add to .gitignore",
+        "attack_scenario": "1-2 sentence story of what an attacker could do with this specific secret",
+        "blast_radius": "what systems, data, or accounts this secret controls",
+        "false_positive_likelihood": "LOW | MEDIUM | HIGH",
+        "false_positive_reasoning": "e.g. test/example value = HIGH, real-looking key pattern = LOW",
+        "verification_steps": ["revoke and rotate the credential", "run secret scan again to confirm removal", "audit access logs for unauthorized use"],
         "raw_output": "relevant raw tool output snippet"
       }
     ]
@@ -73,7 +88,17 @@ SCHEMA = """{
     "executive_summary": "2-3 sentence plain English overview of overall security posture",
     "critical_actions": ["immediate action items only, one per element"],
     "risk_assessment": "one paragraph plain English risk explanation",
-    "recommended_priority_order": ["finding description ordered most to least urgent, one per element"]
+    "recommended_priority_order": ["finding description ordered most to least urgent, one per element"],
+    "single_most_important_action": "one decisive sentence — if the developer can only do one thing right now, this is it",
+    "finding_relationships": [
+      {
+        "group_name": "short label for this cluster of related findings",
+        "finding_ids": ["SA-001", "DA-002"],
+        "explanation": "how these findings relate, compound each other, or form an attack chain"
+      }
+    ],
+    "scan_coverage_gaps": ["a thing this scan did NOT check that the developer should still consider"],
+    "clean_repo_context": "if total_findings is 0: explain what clean means given the tools used and what to still watch for; if findings exist set to empty string"
   }
 }"""
 
@@ -170,6 +195,10 @@ def _error_report(repo_url: str, start: float, raw: str, error: str) -> dict:
             "critical_actions": [],
             "risk_assessment": "",
             "recommended_priority_order": [],
+            "single_most_important_action": "",
+            "finding_relationships": [],
+            "scan_coverage_gaps": [],
+            "clean_repo_context": "",
         },
         "parse_error": error,
         "raw_model_output": raw,
@@ -222,6 +251,25 @@ Rules:
 - Leave the "meta" object empty ({{}}) — it will be filled programmatically
 - Do NOT include any "id" fields — they will be auto-assigned
 - If a tool returned no findings, its array must be []
+
+Per-finding enrichment fields (required for every finding):
+- attack_scenario: 1-2 sentences describing a concrete, realistic exploitation path for this specific finding
+- blast_radius: what data, systems, accounts, or access is at risk if exploited
+- false_positive_likelihood: LOW (definitely real), MEDIUM (uncertain context), or HIGH (likely test/example code)
+- false_positive_reasoning: one sentence explaining the confidence level
+- verification_steps: 2-3 actionable steps a developer can run to confirm the fix worked
+
+ai_synthesis enrichment fields:
+- single_most_important_action: one decisive sentence — the single highest-priority action right now
+- finding_relationships: group findings that share an attack vector or compound each other.
+  Reference findings by their auto-assigned IDs: the Nth item in static_analysis is SA-N (1-indexed, 3-digit zero-padded, e.g. SA-001),
+  Nth in dependency_audit is DA-N (DA-001...), Nth in secret_detection is SD-N (SD-001...).
+  If no meaningful relationships exist, use an empty array.
+- scan_coverage_gaps: list what semgrep/bandit, pip-audit/npm-audit, and gitleaks/trufflehog do NOT cover
+  (e.g. runtime behavior, business logic flaws, auth flows, SSRF, race conditions, environment-injected secrets).
+- clean_repo_context: if total_findings is 0, explain what "clean" means given these specific tools and what
+  the developer should still consider. If total_findings > 0, set to empty string "".
+
 - Return ONLY the JSON object. No markdown. No backticks. No explanation.
 
 SCHEMA:
@@ -254,7 +302,7 @@ def synthesize_report(
     repo_url: str,
     scan_results: dict,
     clone_path: str | None = None,
-) -> dict:
+) -> tuple[dict, str]:
     start = time.time()
     client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
 
@@ -279,19 +327,19 @@ def synthesize_report(
                 report = _parse_and_validate(raw2)
             except Exception as e2:
                 err = _error_report(repo_url, start, raw2, str(e2))
-                _save(err, repo_url)
-                return err
+                saved = _save(err, repo_url)
+                return err, saved.name
 
     except Exception as model_exc:
         # Model call itself failed (timeout, context overflow, Ollama error, etc.)
         # Always save an error report so the file appears in the reports tab.
         err = _error_report(repo_url, start, "", str(model_exc))
-        _save(err, repo_url)
-        return err
+        saved = _save(err, repo_url)
+        return err, saved.name
 
     # ── Post-processing: Python owns meta and IDs ─────────────────────────────
     report = _populate_meta(report, repo_url, start, clone_path)
     report = _assign_ids(report)
 
-    _save(report, repo_url)
-    return report
+    saved = _save(report, repo_url)
+    return report, saved.name
