@@ -1,4 +1,4 @@
-# VigilAgent — Windows launcher
+﻿# VigilAgent — Windows launcher
 # Usage: .\vigilagent.ps1
 
 $MODEL            = "nemotron3-nano:30b"
