@@ -1,43 +1,46 @@
-import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { api } from '../api'
-import ReportViewer from '../components/ReportViewer'
-import { ArrowLeft } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getReport } from '../api';
+import ReportViewer from '../components/ReportViewer';
 
 export default function ReportDetail() {
-  const { filename } = useParams()
+  const { filename } = useParams();
+  const decoded = decodeURIComponent(filename);
 
   const { data: report, isLoading, error } = useQuery({
-    queryKey: ['report', filename],
-    queryFn: () => api.getReport(decodeURIComponent(filename)),
-    enabled: !!filename,
-  })
-
-  if (isLoading) {
-    return (
-      <div className="max-w-5xl mx-auto px-4 py-8 text-center text-slate-500 text-sm">
-        Loading report…
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="max-w-5xl mx-auto px-4 py-8 space-y-4">
-        <Link to="/reports" className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200">
-          <ArrowLeft size={15} /> Back
-        </Link>
-        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-red-400 text-sm">
-          Failed to load report: {error.message}
-        </div>
-      </div>
-    )
-  }
+    queryKey: ['report', decoded],
+    queryFn: () => getReport(decoded),
+  });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <ReportViewer report={report} filename={decodeURIComponent(filename)} />
+    <div className="pt-12 min-h-screen">
+      {/* Back nav */}
+      <div className="px-4 py-2 no-print" style={{ borderBottom: '1px solid rgba(0,240,255,0.1)' }}>
+        <Link
+          to="/reports"
+          style={{ color: 'rgba(0,240,255,0.5)', fontSize: 11, textDecoration: 'none', letterSpacing: '0.08em' }}
+          onMouseEnter={e => e.currentTarget.style.color = '#00f0ff'}
+          onMouseLeave={e => e.currentTarget.style.color = 'rgba(0,240,255,0.5)'}
+        >
+          ← REPORTS
+        </Link>
+      </div>
+
+      <div className="p-4">
+        {isLoading && (
+          <div style={{ color: 'rgba(0,240,255,0.4)', fontSize: 12, paddingTop: 40 }} className="animate-pulse text-center">
+            // loading report...
+          </div>
+        )}
+        {error && (
+          <div className="text-center pt-12 space-y-3">
+            <div style={{ color: '#ff4444', fontSize: 14 }}>✕ Failed to load report</div>
+            <div style={{ color: 'rgba(0,240,255,0.4)', fontSize: 11 }}>{error.message}</div>
+            <Link to="/reports" style={{ color: '#00f0ff', fontSize: 11, textDecoration: 'none' }}>← back to reports</Link>
+          </div>
+        )}
+        {report && <ReportViewer report={report} filename={decoded} />}
+      </div>
     </div>
-  )
+  );
 }

@@ -1,7 +1,7 @@
 ﻿# VigilAgent — Windows launcher
 # Usage: .\vigilagent.ps1
 
-$MODEL            = "nemotron3-nano:30b"
+$MODEL            = "nemotron-3-nano:30b"
 $GITLEAKS_VERSION = "8.21.2"
 $ScriptDir        = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BinDir           = Join-Path $ScriptDir "bin"
@@ -74,18 +74,29 @@ if (-not (Get-Command gitleaks -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command trufflehog -ErrorAction SilentlyContinue)) {
     Write-Host "  trufflehog not found — looking up latest release..." -ForegroundColor Yellow
     Write-Host "             Starting download, please wait..." -ForegroundColor DarkGray
-    $thZip = Join-Path $BinDir "trufflehog.zip"
+    $thArchive = Join-Path $BinDir "trufflehog_win.zip"
     try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest" -UseBasicParsing
-        $asset = $release.assets | Where-Object { $_.name -like "*windows_amd64*.zip" } | Select-Object -First 1
-        if (-not $asset) { throw "No Windows asset found in latest release" }
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $thZip -UseBasicParsing
-        Expand-Archive -Path $thZip -DestinationPath $BinDir -Force
-        Remove-Item $thZip -ErrorAction SilentlyContinue
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest"
+        $asset = $release.assets | Where-Object { $_.name -like "*windows_amd64*" } | Select-Object -First 1
+        if (-not $asset) {
+            $names = ($release.assets | ForEach-Object { $_.name }) -join ", "
+            throw "No Windows asset found. Available: $names"
+        }
+        $isTarGz = $asset.name -like "*.tar.gz"
+        $thArchive = Join-Path $BinDir ("trufflehog_win" + $(if ($isTarGz) { ".tar.gz" } else { ".zip" }))
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $thArchive -UseBasicParsing
+        if ($isTarGz) {
+            tar -xzf $thArchive -C $BinDir
+        } else {
+            Expand-Archive -Path $thArchive -DestinationPath $BinDir -Force
+        }
+        Remove-Item $thArchive -ErrorAction SilentlyContinue
         Write-Host "  trufflehog downloaded" -ForegroundColor Green
     } catch {
         Write-Host ""
         Write-Host "  ERROR: Could not download trufflehog automatically." -ForegroundColor Red
+        Write-Host "  Reason: $($_.Exception.Message)" -ForegroundColor DarkGray
         Write-Host "  Download the Windows binary from: https://github.com/trufflesecurity/trufflehog/releases" -ForegroundColor Yellow
         Write-Host "  and place trufflehog.exe in your PATH or in the bin\ folder." -ForegroundColor Yellow
         Write-Host ""
@@ -121,7 +132,7 @@ try {
     exit 1
 }
 
-$modelList = ollama list 2>$null
+$modelList = (ollama list 2>$null) -join "`n"
 if ($modelList -notmatch [regex]::Escape($MODEL)) {
     Write-Host "  Model '$MODEL' not found locally." -ForegroundColor Yellow
     Write-Host "  Starting download — this can take several minutes depending on your connection..." -ForegroundColor Yellow
@@ -180,7 +191,7 @@ $backend = Start-Job -ScriptBlock {
     param($scriptDir, $binDir, $venvPath)
     if ($env:PATH -notlike "*$binDir*") { $env:PATH = "$binDir;$env:PATH" }
     Set-Location $scriptDir
-    & "$venvPath\Scripts\uvicorn.exe" api.main:app --host 0.0.0.0 --port 8000
+    & "$venvPath\Scripts\python.exe" -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 } -ArgumentList $ScriptDir, $BinDir, $venvPath
 
 Start-Sleep -Seconds 2
@@ -189,7 +200,7 @@ Write-Host "Starting Vite frontend on port 5173..." -ForegroundColor Cyan
 $frontend = Start-Job -ScriptBlock {
     param($scriptDir)
     Set-Location (Join-Path $scriptDir "frontend")
-    npm run dev -- --host 0.0.0.0
+    npm run dev
 } -ArgumentList $ScriptDir
 
 Start-Sleep -Seconds 3

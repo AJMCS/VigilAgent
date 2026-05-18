@@ -59,7 +59,7 @@ def agent_report(state: RepoScanState) -> RepoScanState:
         "dependency_audit": state.get("deps_result", {}),
         "secret_scan": state.get("secrets_result", {}),
     }
-    report = synthesize_report(state["repo_url"], scan_results)
+    report = synthesize_report(state["repo_url"], scan_results, state["clone_result"].get("path"))
     return {**state, "report": report}
 
 

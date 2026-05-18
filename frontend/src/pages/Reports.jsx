@@ -1,120 +1,175 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { FolderOpen, FileText, ChevronRight, BarChart2 } from 'lucide-react'
-import { api } from '../api'
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { listReports, getReport } from '../api';
+import ReportViewer from '../components/ReportViewer';
+import SeverityBadge from '../components/ui/SeverityBadge';
 
-function parseFilename(filename) {
-  // New format: repo_YYYY-MM-DD_HH-MM-SS.json
-  const tsMatch = filename.match(/^(.+)_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})\.json$/)
-  if (tsMatch) {
-    const [, repo, date, time] = tsMatch
-    return { repo, date, time: time.replaceAll('-', ':'), label: `${date} at ${time.replaceAll('-', ':')} UTC` }
-  }
-  // Legacy format: repo_YYYY-MM-DD.json
-  const dateMatch = filename.match(/^(.+)_(\d{4}-\d{2}-\d{2})\.json$/)
-  if (dateMatch) return { repo: dateMatch[1], date: dateMatch[2], time: null, label: dateMatch[2] }
-  return { repo: filename, date: 'unknown', time: null, label: 'unknown' }
-}
-
-function groupByRepo(files) {
-  const map = {}
-  files.forEach(f => {
-    const parsed = parseFilename(f.filename)
-    if (!map[parsed.repo]) map[parsed.repo] = []
-    map[parsed.repo].push({ ...f, ...parsed })
-  })
-  return map
+function parseFilename(name) {
+  const m1 = name.match(/^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})\.json$/);
+  if (m1) return { repo: m1[1], date: m1[2], time: m1[3].replace(/-/g, ':'), display: `${m1[2]} ${m1[3].replace(/-/g, ':')}` };
+  const m2 = name.match(/^(.+?)_(\d{4}-\d{2}-\d{2})\.json$/);
+  if (m2) return { repo: m2[1], date: m2[2], time: '', display: m2[2] };
+  return { repo: name.replace(/\.json$/, ''), date: '', time: '', display: '' };
 }
 
 export default function Reports() {
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [activeRepo, setActiveRepo]     = useState(null);
+
   const { data: files = [], isLoading } = useQuery({
     queryKey: ['reports'],
-    queryFn: api.listReports,
+    queryFn: listReports,
     refetchInterval: 15000,
-  })
+  });
 
-  const grouped = groupByRepo(files)
-  const repos = Object.keys(grouped).sort()
-  const [selectedRepo, setSelectedRepo] = useState(null)
-  const currentRepo = selectedRepo || repos[0]
+  const { data: report, isLoading: reportLoading } = useQuery({
+    queryKey: ['report', selectedFile],
+    queryFn: () => getReport(selectedFile),
+    enabled: !!selectedFile,
+  });
 
-  if (isLoading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 py-8 text-center text-slate-600 text-sm">
-        Loading reports…
-      </div>
-    )
-  }
+  // Group files by repo
+  const byRepo = {};
+  files.forEach(f => {
+    const p = parseFilename(f.filename);
+    if (!byRepo[p.repo]) byRepo[p.repo] = [];
+    byRepo[p.repo].push({ ...f, ...p });
+  });
+  const repos = Object.keys(byRepo).sort();
+  const currentRepo = activeRepo || repos[0];
 
-  if (repos.length === 0) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
-          <BarChart2 size={32} className="text-slate-700 mx-auto mb-3" />
-          <p className="text-slate-500 text-sm">No reports yet.</p>
-          <p className="text-slate-600 text-xs mt-1">Run a scan from the Dashboard to generate reports.</p>
-          <Link to="/" className="inline-block mt-4 text-indigo-400 text-sm hover:text-indigo-300">
-            Go to Dashboard →
-          </Link>
-        </div>
-      </div>
-    )
-  }
+  if (isLoading) return (
+    <div className="pt-20 flex items-center justify-center" style={{ color: 'rgba(0,240,255,0.4)', fontSize: 12 }}>
+      // loading reports...
+    </div>
+  );
+
+  if (files.length === 0) return (
+    <div className="pt-12 flex flex-col items-center justify-center min-h-screen gap-4">
+      <div style={{ color: 'rgba(0,240,255,0.2)', fontSize: 48 }}>◉</div>
+      <div style={{ color: 'rgba(0,240,255,0.4)', fontSize: 14 }}>No reports yet.</div>
+      <Link to="/" style={{ color: '#00ff88', fontSize: 12, textDecoration: 'none', border: '1px solid rgba(0,255,136,0.3)', padding: '4px 16px' }}>
+        ▶ RUN A SCAN
+      </Link>
+    </div>
+  );
+
+  const repoReports = (byRepo[currentRepo] || [])
+    .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
+
+  const overallSeverity = report?.summary?.overall_severity;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
-        {/* Repo sidebar */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 h-fit">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-1">
-            Projects
-          </h2>
-          <ul className="space-y-1">
-            {repos.map(repo => (
-              <li key={repo}>
-                <button
-                  onClick={() => setSelectedRepo(repo)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
-                    currentRepo === repo
-                      ? 'bg-indigo-600/15 text-indigo-300 border border-indigo-500/30'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                  }`}
-                >
-                  <FolderOpen size={14} className="shrink-0" />
-                  <span className="truncate font-mono">{repo}</span>
-                  <span className="ml-auto text-xs text-slate-600 shrink-0">
-                    {grouped[repo].length}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+    <div className="pt-12 min-h-screen flex" style={{ height: '100vh' }}>
 
-        {/* Scan list for selected repo */}
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-slate-300 font-mono">{currentRepo}</h2>
-          {currentRepo && grouped[currentRepo]
-            ?.sort((a, b) => b.filename.localeCompare(a.filename))
-            .map(file => (
-              <Link
-                key={file.filename}
-                to={`/report/${encodeURIComponent(file.filename)}`}
-                className="flex items-center gap-4 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl px-5 py-4 transition-all group"
-              >
-                <FileText size={18} className="text-indigo-400 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-200">{file.label}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    {(file.size_bytes / 1024).toFixed(1)} KB
-                  </div>
-                </div>
-                <ChevronRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
-              </Link>
-            ))}
+      {/* ── Left panel: project + report list ──────────────────────────────── */}
+      <div
+        className="flex flex-col shrink-0 no-print"
+        style={{ width: 260, borderRight: '1px solid rgba(0,240,255,0.1)', overflowY: 'auto' }}
+      >
+        {/* Project list */}
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(0,240,255,0.1)', color: '#00f0ff', fontSize: 10, fontWeight: 700, letterSpacing: '0.15em' }}>
+          [ PROJECTS ]
         </div>
+        {repos.map(repo => {
+          const isActive = repo === currentRepo;
+          return (
+            <button
+              key={repo}
+              onClick={() => { setActiveRepo(repo); setSelectedFile(null); }}
+              className="w-full text-left px-4 py-2 transition-all duration-100"
+              style={{
+                background: isActive ? 'rgba(0,240,255,0.06)' : 'transparent',
+                borderBottom: '1px solid rgba(0,240,255,0.06)',
+                borderLeft: `2px solid ${isActive ? '#00f0ff' : 'transparent'}`,
+                color: isActive ? '#00f0ff' : 'rgba(0,240,255,0.45)',
+                fontSize: 11, fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >
+              <div className="truncate">{repo}</div>
+              <div style={{ fontSize: 9, color: 'rgba(0,240,255,0.3)', marginTop: 1 }}>
+                {byRepo[repo].length} report{byRepo[repo].length > 1 ? 's' : ''}
+              </div>
+            </button>
+          );
+        })}
+
+        {/* Report list for selected project */}
+        {currentRepo && (
+          <>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(0,240,255,0.08)', borderTop: '1px solid rgba(0,240,255,0.1)', color: 'rgba(0,240,255,0.5)', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', marginTop: 8 }}>
+              [ SCANS ]
+            </div>
+            {repoReports.map(r => {
+              const isSelected = r.filename === selectedFile;
+              return (
+                <button
+                  key={r.filename}
+                  onClick={() => setSelectedFile(r.filename)}
+                  className="w-full text-left px-4 py-2.5 transition-all duration-100"
+                  style={{
+                    background: isSelected ? 'rgba(0,255,136,0.06)' : 'transparent',
+                    borderBottom: '1px solid rgba(0,240,255,0.06)',
+                    borderLeft: `2px solid ${isSelected ? '#00ff88' : 'transparent'}`,
+                    fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ color: isSelected ? '#00ff88' : 'rgba(0,240,255,0.6)', fontSize: 10, fontWeight: isSelected ? 700 : 400 }}>
+                    {r.display || r.filename}
+                  </div>
+                  <div style={{ color: 'rgba(0,240,255,0.25)', fontSize: 9, marginTop: 1 }}>
+                    {Math.round(r.size_bytes / 1024)}KB
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
+
+      {/* ── Right panel: inline report view ────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto relative">
+        {!selectedFile ? (
+          <div className="flex flex-col items-center justify-center h-full" style={{ color: 'rgba(0,240,255,0.2)', gap: 12 }}>
+            <div style={{ fontSize: 36 }}>◉</div>
+            <div style={{ fontSize: 12 }}>Select a report to view it here</div>
+          </div>
+        ) : reportLoading ? (
+          <div className="flex items-center justify-center h-full" style={{ color: 'rgba(0,240,255,0.4)', fontSize: 12 }} >
+            <span className="animate-pulse">// loading report...</span>
+          </div>
+        ) : report ? (
+          <div>
+            {/* Toolbar: severity + print button */}
+            <div
+              className="sticky top-0 z-10 flex items-center justify-between px-5 py-2 no-print"
+              style={{ background: 'rgba(10,10,10,0.97)', borderBottom: '1px solid rgba(0,240,255,0.12)', backdropFilter: 'blur(6px)' }}
+            >
+              <div className="flex items-center gap-3">
+                {overallSeverity && <SeverityBadge severity={overallSeverity.toLowerCase()} />}
+                <span style={{ color: 'rgba(0,240,255,0.5)', fontSize: 10 }}>
+                  {selectedFile}
+                </span>
+              </div>
+              <button
+                onClick={() => window.print()}
+                className="px-3 py-1 text-[11px] font-bold tracking-widest uppercase transition-all duration-150"
+                style={{ color: '#00f0ff', border: '1px solid rgba(0,240,255,0.35)', background: 'transparent', fontFamily: 'inherit', cursor: 'pointer' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,240,255,0.08)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(0,240,255,0.3)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                ⎙ PRINT
+              </button>
+            </div>
+
+            <div className="p-5">
+              <ReportViewer report={report} filename={selectedFile} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
     </div>
-  )
+  );
 }

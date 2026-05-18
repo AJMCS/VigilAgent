@@ -1,67 +1,58 @@
-import { GitBranch, Code2, Package, KeyRound, FileText, Check, Loader } from 'lucide-react'
-
 const STEPS = [
-  { key: 'clone', label: 'Clone', icon: GitBranch },
-  { key: 'static_analysis', label: 'Static', icon: Code2 },
-  { key: 'dependency_audit', label: 'Deps', icon: Package },
-  { key: 'secret_scan', label: 'Secrets', icon: KeyRound },
-  { key: 'report', label: 'Report', icon: FileText },
-]
+  { key: 'clone',            label: 'CLONE'   },
+  { key: 'static_analysis',  label: 'STATIC'  },
+  { key: 'dependency_audit', label: 'DEPS'    },
+  { key: 'secret_scan',      label: 'SECRETS' },
+  { key: 'report',           label: 'REPORT'  },
+];
 
-export default function PipelineSteps({ currentAgent, agentsDone = [], status }) {
+export default function PipelineSteps({ currentAgent, agentsDone = [] }) {
   return (
     <div className="flex items-center gap-0">
       {STEPS.map((step, i) => {
-        const isDone = agentsDone.includes(step.key) || status === 'completed'
-        const isCurrent = currentAgent === step.key
-        const isPending = !isDone && !isCurrent
-        const Icon = step.icon
+        const done    = agentsDone.includes(step.key);
+        const active  = currentAgent === step.key;
+        const pending = !done && !active;
+        const last    = i === STEPS.length - 1;
+
+        const color = done ? '#00ff88' : active ? '#00f0ff' : 'rgba(0,240,255,0.2)';
 
         return (
           <div key={step.key} className="flex items-center">
             {/* Step node */}
-            <div className="flex flex-col items-center gap-1">
+            <div className="flex flex-col items-center gap-0.5">
               <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                  isDone
-                    ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40'
-                    : isCurrent
-                    ? 'bg-indigo-500/20 text-indigo-400 ring-1 ring-indigo-500/60 animate-pulse'
-                    : 'bg-slate-800 text-slate-600 ring-1 ring-slate-700'
-                }`}
-              >
-                {isDone ? (
-                  <Check size={12} />
-                ) : isCurrent ? (
-                  <Loader size={12} className="animate-spin" />
-                ) : (
-                  <Icon size={12} />
-                )}
-              </div>
+                className="w-2 h-2 rounded-full transition-all duration-300"
+                style={{
+                  background: color,
+                  boxShadow: done
+                    ? '0 0 6px #00ff88'
+                    : active
+                    ? '0 0 8px #00f0ff, 0 0 16px #00f0ff'
+                    : 'none',
+                  animation: active ? 'pulseDotBlue 1.2s ease-in-out infinite' : 'none',
+                }}
+              />
               <span
-                className={`text-[10px] font-medium ${
-                  isDone ? 'text-emerald-400' : isCurrent ? 'text-indigo-400' : 'text-slate-600'
-                }`}
+                className="text-[8px] tracking-wider font-bold"
+                style={{ color, whiteSpace: 'nowrap' }}
               >
                 {step.label}
               </span>
             </div>
-
-            {/* Connector line */}
-            {i < STEPS.length - 1 && (
+            {/* Connector */}
+            {!last && (
               <div
-                className={`h-px w-6 mx-0.5 mb-4 transition-colors ${
-                  agentsDone.includes(STEPS[i + 1]?.key) || isDone
-                    ? 'bg-emerald-500/40'
-                    : isCurrent
-                    ? 'bg-indigo-500/30'
-                    : 'bg-slate-700'
-                }`}
+                className="w-6 h-px mx-0.5 mb-3 transition-all duration-300"
+                style={{
+                  background: done ? '#00ff88' : active ? 'rgba(0,240,255,0.4)' : 'rgba(0,240,255,0.1)',
+                  boxShadow: done ? '0 0 4px #00ff88' : 'none',
+                }}
               />
             )}
           </div>
-        )
+        );
       })}
     </div>
-  )
+  );
 }

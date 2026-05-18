@@ -7,16 +7,14 @@ import Profiles from './pages/Profiles'
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="min-h-screen" style={{ background: '#0a0a0a' }}>
       <Navbar />
-      <main className="pt-14">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/report/:filename" element={<ReportDetail />} />
-          <Route path="/profiles" element={<Profiles />} />
-        </Routes>
-      </main>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/report/:filename" element={<ReportDetail />} />
+        <Route path="/profiles" element={<Profiles />} />
+      </Routes>
     </div>
   )
 }

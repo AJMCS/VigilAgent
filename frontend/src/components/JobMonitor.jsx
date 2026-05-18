@@ -1,158 +1,191 @@
-import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { Activity, Clock, CheckCircle2, XCircle, ExternalLink, GitPullRequest } from 'lucide-react'
-import PipelineSteps from './PipelineSteps'
-import { api } from '../api'
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { listScans, cancelScan } from '../api';
+import PipelineSteps from './PipelineSteps';
+import SeverityBadge from './ui/SeverityBadge';
+import NeonCard from './ui/NeonCard';
+import StatusDot from './ui/StatusDot';
 
-function statusBadge(status) {
-  const map = {
-    queued:    'bg-slate-700 text-slate-300',
-    running:   'bg-indigo-500/20 text-indigo-300 animate-pulse',
-    completed: 'bg-emerald-500/20 text-emerald-300',
-    failed:    'bg-red-500/20 text-red-300',
-  }
-  return map[status] || map.queued
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - new Date(ts)) / 1000);
+  if (s < 60)  return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return `${Math.floor(s/3600)}h ago`;
 }
-
 function repoShort(url) {
-  try { return new URL(url).pathname.replace(/^\//, '') } catch { return url }
+  try { const p = new URL(url).pathname.replace(/^\//, ''); return p; } catch { return url; }
 }
+function isAutoPr(j) { return j.trigger === 'auto_pr'; }
 
-function timeAgo(iso) {
-  const diff = Math.floor((Date.now() - new Date(iso)) / 1000)
-  if (diff < 60) return `${diff}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  return `${Math.floor(diff / 3600)}h ago`
-}
-
-const isAutoPr = (job) => job.trigger === 'auto_pr'
+const STATUS_COLOR = {
+  queued:    '#00f0ff',
+  running:   '#00f0ff',
+  completed: '#00ff88',
+  failed:    '#ff4444',
+  cancelled: '#666666',
+};
 
 function JobCard({ job }) {
-  const hasResults = job.status === 'completed' && job.results?.length > 0
-  const auto = isAutoPr(job)
-  const borderColor = auto ? 'border-purple-700/60' : 'border-slate-700'
+  const [cancelling, setCancelling] = useState(false);
+  const qc = useQueryClient();
+  const isActive = ['queued','running'].includes(job.status);
+  const color    = STATUS_COLOR[job.status] || '#888';
+  // Support both new schema (meta.scanned_at) and legacy schema (generated_at)
+  const reports  = (job.results || []).flatMap(r =>
+    (r.report?.meta?.scanned_at || r.report?.generated_at) ? [r] : []
+  );
 
   return (
-    <div className={`bg-slate-800 border ${borderColor} rounded-xl p-4 space-y-3`}>
+    <NeonCard green={job.status === 'completed'} className="p-3 space-y-2 animate-slide-up">
       {/* Header */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          {/* Auto PR badge */}
-          {auto && (
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 text-purple-300 text-[10px] font-medium rounded-full border border-purple-500/30">
-                <GitPullRequest size={10} /> PR #{job.pr_number} · auto-scan
-              </span>
-            </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {isActive && <StatusDot active blue={job.status === 'running'} size={6} />}
+          <span
+            className="text-[10px] font-bold tracking-widest uppercase px-1.5 py-0.5"
+            style={{ color, border: `1px solid ${color}44`, background: `${color}0d` }}
+          >
+            {job.status}
+          </span>
+          {isAutoPr(job) && (
+            <span className="text-[10px] px-1.5 py-0.5 tracking-wider" style={{ color: '#aa88ff', border: '1px solid rgba(170,136,255,0.3)', background: 'rgba(170,136,255,0.06)' }}>
+              PR #{job.pr_number}
+            </span>
           )}
-          <div className="text-sm font-medium text-slate-200 truncate font-mono">
-            {auto && job.pr_title
-              ? job.pr_title
-              : job.repos.map(repoShort).join(', ')}
-          </div>
-          <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
-            <Clock size={11} />
-            {timeAgo(job.created_at)}
-            {auto && job.pr_author && (
-              <span className="text-slate-600">· by {job.pr_author}</span>
-            )}
-            {!auto && job.current_repo && job.repos.length > 1 && (
-              <span className="text-slate-600">· scanning {repoShort(job.current_repo)}</span>
-            )}
-          </div>
         </div>
-        <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium ${statusBadge(job.status)}`}>
-          {job.status}
-        </span>
+        <div className="flex items-center gap-2">
+          <span style={{ color: 'rgba(0,240,255,0.35)', fontSize: 10 }}>{timeAgo(job.created_at)}</span>
+          {isActive && (
+            <button
+              disabled={cancelling}
+              onClick={async () => {
+                setCancelling(true);
+                try { await cancelScan(job.job_id); } catch {}
+                qc.invalidateQueries({ queryKey: ['scans'] });
+                setCancelling(false);
+              }}
+              style={{
+                color: cancelling ? '#555' : '#ff4444',
+                background: 'transparent',
+                border: '1px solid rgba(255,68,68,0.35)',
+                padding: '1px 7px',
+                fontSize: 9,
+                letterSpacing: '0.1em',
+                fontFamily: 'inherit',
+                cursor: cancelling ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { if (!cancelling) e.currentTarget.style.boxShadow = '0 0 8px rgba(255,68,68,0.4)'; }}
+              onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              {cancelling ? 'ABORTING...' : '✕ ABORT'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Pipeline visualizer */}
-      <PipelineSteps
-        currentAgent={job.current_agent}
-        agentsDone={job.agents_done || []}
-        status={job.status}
-      />
+      {/* Repos */}
+      <div className="space-y-0.5">
+        {(job.repos || []).map(u => (
+          <div key={u} style={{ color: '#ccc', fontSize: 11 }}>
+            // {repoShort(u)}
+          </div>
+        ))}
+        {isAutoPr(job) && job.pr_title && (
+          <div style={{ color: '#aa88ff', fontSize: 10 }}>"{job.pr_title}"</div>
+        )}
+      </div>
+
+      {/* Pipeline */}
+      <PipelineSteps currentAgent={job.current_agent} agentsDone={job.agents_done || []} />
+
+      {/* Scan progress bar */}
+      {job.status === 'running' && <div className="scan-progress" />}
 
       {/* Error */}
-      {job.results?.some(r => r.error) && (
-        <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-500/10 rounded-lg px-3 py-2">
-          <XCircle size={12} className="mt-0.5 shrink-0" />
-          {job.results.find(r => r.error)?.error}
+      {job.status === 'failed' && job.error && (
+        <div style={{ color: '#ff4444', fontSize: 10, borderLeft: '2px solid #ff4444', paddingLeft: 8 }}>
+          {job.error}
         </div>
       )}
 
-      {/* View report links */}
-      {hasResults && job.results.map((r, i) => {
-        if (!r.report?.generated_at) return null
-        // Match the backend filename format: YYYY-MM-DD_HH-MM-SS
-        const ts = r.report.generated_at
-        const fileTs = ts
-          ? ts.slice(0, 19).replace('T', '_').replaceAll(':', '-')
-          : null
-        const slug = r.repo_url?.split('/').pop()
-        const filename = fileTs ? `${slug}_${fileTs}.json` : null
-        if (!filename) return null
-        return (
-          <Link
-            key={i}
-            to={`/report/${encodeURIComponent(filename)}`}
-            className={`flex items-center gap-1.5 text-xs transition-colors ${auto ? 'text-purple-400 hover:text-purple-300' : 'text-indigo-400 hover:text-indigo-300'}`}
-          >
-            <CheckCircle2 size={12} />
-            View report for {repoShort(r.repo_url)}
-            <ExternalLink size={11} />
-          </Link>
-        )
-      })}
-    </div>
-  )
+      {/* Reports links */}
+      {reports.length > 0 && (
+        <div className="flex flex-wrap gap-1 pt-1" style={{ borderTop: '1px solid rgba(0,240,255,0.1)' }}>
+          {reports.map(r => {
+            const slug = (r.report.repo_url || '').split('/').pop();
+            const ts   = (r.report.generated_at || '').slice(0,10);
+            const fname = `${slug}_${ts}.json`; // best-effort filename
+            return (
+              <Link
+                key={r.repo_url}
+                to={`/reports`}
+                className="text-[10px] tracking-wider transition-all duration-150"
+                style={{
+                  color: '#00ff88',
+                  border: '1px solid rgba(0,255,136,0.25)',
+                  padding: '1px 6px',
+                  background: 'rgba(0,255,136,0.06)',
+                  textDecoration: 'none',
+                }}
+              >
+                VIEW REPORT ↗
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </NeonCard>
+  );
 }
 
-export default function JobMonitor() {
-  const { data: jobs = [], isLoading } = useQuery({
+export default function JobMonitor({ hideEmptyState = false }) {
+  const { data: jobs = [] } = useQuery({
     queryKey: ['scans'],
-    queryFn: api.listScans,
-    refetchInterval: (query) => {
-      const hasActive = query.state.data?.some(j => j.status === 'queued' || j.status === 'running')
-      return hasActive ? 2000 : 10000
+    queryFn: listScans,
+    refetchInterval: d => {
+      const arr = d?.state?.data || [];
+      return arr.some(j => ['queued','running'].includes(j.status)) ? 2000 : 10000;
     },
-  })
+  });
 
-  const sorted = [...jobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-  const active = sorted.filter(j => j.status === 'queued' || j.status === 'running')
-  const finished = sorted.filter(j => j.status === 'completed' || j.status === 'failed')
+  const active   = jobs.filter(j => ['queued','running'].includes(j.status));
+  const recent   = jobs.filter(j => !['queued','running'].includes(j.status)).slice(0, 8);
 
   return (
     <div className="space-y-4">
-      <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-        <Activity size={14} />
-        Agent Monitor
-        {active.length > 0 && (
-          <span className="ml-1 px-1.5 py-0.5 bg-indigo-500/20 text-indigo-300 text-[10px] rounded-full font-medium">
-            {active.length} active
-          </span>
-        )}
-      </h2>
-
-      {isLoading && (
-        <p className="text-xs text-slate-600 text-center py-6">Connecting…</p>
-      )}
-
-      {!isLoading && jobs.length === 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
-          <p className="text-sm text-slate-600">No scans yet. Submit one on the left.</p>
+      {/* Active */}
+      {active.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2" style={{ color: '#00f0ff', fontSize: 10, letterSpacing: '0.1em' }}>
+            <StatusDot active blue size={6} />
+            ACTIVE SCANS ({active.length})
+          </div>
+          <div className="space-y-2">
+            {active.map(j => <JobCard key={j.job_id} job={j} />)}
+          </div>
         </div>
       )}
 
-      {active.map(job => <JobCard key={job.job_id} job={job} />)}
+      {/* Recent */}
+      {recent.length > 0 && (
+        <div>
+          <div style={{ color: 'rgba(0,240,255,0.4)', fontSize: 10, letterSpacing: '0.1em', marginBottom: 8 }}>
+            // RECENT SCANS
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {recent.map(j => <JobCard key={j.job_id} job={j} />)}
+          </div>
+        </div>
+      )}
 
-      {finished.length > 0 && (
-        <>
-          {active.length > 0 && <div className="border-t border-slate-800" />}
-          <p className="text-xs text-slate-600 font-medium uppercase tracking-wider">Recent</p>
-          {finished.slice(0, 5).map(job => <JobCard key={job.job_id} job={job} />)}
-        </>
+      {active.length === 0 && recent.length === 0 && !hideEmptyState && (
+        <div className="text-center py-12" style={{ color: 'rgba(0,240,255,0.2)', fontSize: 12 }}>
+          <div style={{ fontSize: 32, marginBottom: 8, opacity: 0.3 }}>◉</div>
+          No scans yet. Submit a repo to begin.
+        </div>
       )}
     </div>
-  )
+  );
 }

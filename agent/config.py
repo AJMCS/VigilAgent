@@ -6,8 +6,8 @@ class Settings(BaseSettings):
     # Local LLM via Ollama (OpenAI-compatible endpoint)
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"   # Ollama ignores this; OpenAI client requires it
-    primary_model: str = "nemotron3-nano:30b"
-    subagent_model: str = "nemotron3-nano:30b"
+    primary_model: str = "nemotron-3-nano:30b"
+    subagent_model: str = "nemotron-3-nano:30b"
 
     github_client_id: str = ""
     github_client_secret: str = ""
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    poll_interval_seconds: int = 300  # how often to check watched repos for new PRs
+    poll_interval_seconds: int = 30  # how often to check watched repos for new PRs
 
     class Config:
         env_file = ".env"

@@ -1,152 +1,119 @@
-import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Loader } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { api } from '../api'
+import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { chatWithReport } from '../api';
 
 export default function ReportChat({ filename }) {
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const bottomRef = useRef(null)
-  const inputRef = useRef(null)
+  const [messages, setMessages] = useState([]);
+  const [input, setInput]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const bottomRef = useRef(null);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const send = async () => {
-    const question = input.trim()
-    if (!question || loading) return
-
-    const userMsg = { role: 'user', content: question }
-    setMessages(prev => [...prev, userMsg])
-    setInput('')
-    setLoading(true)
-
-    // Build history for the API (exclude the message we just added)
-    const history = messages.map(m => ({ role: m.role, content: m.content }))
-
+    const q = input.trim();
+    if (!q || loading) return;
+    const history = messages.map(m => ({ role: m.role, content: m.content }));
+    setMessages(m => [...m, { role: 'user', content: q }]);
+    setInput('');
+    setLoading(true);
     try {
-      const data = await api.chatWithReport(filename, question, history)
-      setMessages(prev => [...prev, { role: 'assistant', content: data.answer }])
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `Error: ${err.message}`,
-        error: true,
-      }])
-    } finally {
-      setLoading(false)
-      inputRef.current?.focus()
-    }
-  }
-
-  const handleKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      send()
-    }
-  }
+      const { answer } = await chatWithReport(filename, q, history);
+      setMessages(m => [...m, { role: 'assistant', content: answer }]);
+    } catch (e) {
+      setMessages(m => [...m, { role: 'assistant', content: `✕ ${e.message}`, error: true }]);
+    } finally { setLoading(false); }
+  };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden no-print">
-      {/* Panel header */}
-      <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-800 bg-slate-900/80">
-        <Bot size={15} className="text-indigo-400" />
-        <span className="text-sm font-semibold text-slate-300">Ask Nemotron</span>
-        <span className="text-xs text-slate-600 ml-1">about this report</span>
+    <div className="flex flex-col" style={{ border: '1px solid rgba(0,240,255,0.2)', background: '#050505' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: '1px solid rgba(0,240,255,0.15)' }}>
+        <span style={{ color: '#00f0ff', fontSize: 11, fontWeight: 700, letterSpacing: '0.12em' }}>[ AI CHAT ]</span>
         {messages.length > 0 && (
           <button
             onClick={() => setMessages([])}
-            className="ml-auto text-xs text-slate-600 hover:text-slate-400 transition-colors"
+            style={{ color: 'rgba(0,240,255,0.35)', fontSize: 10, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
           >
-            Clear
+            CLEAR
           </button>
         )}
       </div>
 
       {/* Messages */}
-      <div className="h-80 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: 360 }}>
         {messages.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center text-center gap-3">
-            <Bot size={28} className="text-slate-700" />
-            <div>
-              <p className="text-sm text-slate-500">Ask anything about this report</p>
-              <p className="text-xs text-slate-700 mt-1">
-                e.g. "What's the most urgent fix?" · "Explain the token exposure" · "How do I patch the npm vulns?"
-              </p>
-            </div>
+          <div style={{ color: 'rgba(0,240,255,0.3)', fontSize: 11, textAlign: 'center', paddingTop: 24 }}>
+            Ask anything about this report...
           </div>
         )}
-
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            {/* Avatar */}
-            <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-0.5 ${
-              msg.role === 'user'
-                ? 'bg-indigo-600/30 text-indigo-400'
-                : 'bg-slate-800 text-slate-400'
-            }`}>
-              {msg.role === 'user' ? <User size={13} /> : <Bot size={13} />}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+            <div
+              className="w-6 h-6 flex items-center justify-center text-[10px] font-bold shrink-0"
+              style={{
+                border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.4)' : 'rgba(0,255,136,0.4)'}`,
+                color: m.role === 'user' ? '#00f0ff' : '#00ff88',
+                background: m.role === 'user' ? 'rgba(0,240,255,0.06)' : 'rgba(0,255,136,0.06)',
+              }}
+            >
+              {m.role === 'user' ? 'U' : 'AI'}
             </div>
-
-            {/* Bubble */}
-            <div className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-              msg.role === 'user'
-                ? 'bg-indigo-600/20 text-slate-200 rounded-tr-sm'
-                : msg.error
-                  ? 'bg-red-500/10 text-red-400 rounded-tl-sm'
-                  : 'bg-slate-800 text-slate-300 rounded-tl-sm'
-            }`}>
-              {msg.role === 'assistant' && !msg.error ? (
-                <div className="report-body prose-sm">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.content}
-                  </ReactMarkdown>
-                </div>
-              ) : (
-                msg.content
-              )}
+            <div
+              className="flex-1 text-xs leading-relaxed report-body"
+              style={{
+                color: m.error ? '#ff4444' : '#c0c0c0',
+                padding: '6px 10px',
+                background: m.role === 'user' ? 'rgba(0,240,255,0.04)' : 'rgba(0,0,0,0.4)',
+                border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.12)' : 'rgba(0,240,255,0.08)'}`,
+              }}
+            >
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
             </div>
           </div>
         ))}
-
         {loading && (
-          <div className="flex gap-2.5">
-            <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-slate-800 text-slate-400">
-              <Bot size={13} />
-            </div>
-            <div className="bg-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm flex items-center gap-2 text-slate-500 text-sm">
-              <Loader size={13} className="animate-spin" />
-              Thinking…
+          <div className="flex gap-3">
+            <div className="w-6 h-6 flex items-center justify-center text-[10px]"
+              style={{ border: '1px solid rgba(0,255,136,0.3)', color: '#00ff88' }}>AI</div>
+            <div style={{ color: 'rgba(0,240,255,0.4)', fontSize: 11, paddingTop: 6 }} className="animate-pulse">
+              // processing...
             </div>
           </div>
         )}
-
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
-      <div className="border-t border-slate-800 px-4 py-3 flex gap-2">
+      <div className="flex gap-2 p-3" style={{ borderTop: '1px solid rgba(0,240,255,0.12)' }}>
         <textarea
-          ref={inputRef}
-          rows={1}
+          className="flex-1 px-3 py-2 text-xs rounded-none resize-none"
+          style={{ border: '1px solid rgba(0,240,255,0.25)', fontSize: 11, minHeight: 36, maxHeight: 80 }}
+          placeholder="Ask about this report..."
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKey}
-          placeholder="Ask about this report… (Enter to send)"
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
           disabled={loading}
-          className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none disabled:opacity-50"
         />
         <button
           onClick={send}
           disabled={loading || !input.trim()}
-          className="shrink-0 flex items-center justify-center w-9 h-9 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+          className="px-4 text-xs font-bold tracking-wider uppercase transition-all duration-150"
+          style={{
+            color: '#00ff88',
+            border: '1px solid rgba(0,255,136,0.35)',
+            background: 'transparent',
+            fontFamily: 'inherit',
+            cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+            opacity: loading || !input.trim() ? 0.4 : 1,
+          }}
+          onMouseEnter={e => { if (!loading && input.trim()) { e.currentTarget.style.background = 'rgba(0,255,136,0.08)'; e.currentTarget.style.boxShadow = '0 0 10px rgba(0,255,136,0.3)'; }}}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.boxShadow = 'none'; }}
         >
-          <Send size={14} className="text-white" />
+          SEND
         </button>
       </div>
     </div>
-  )
+  );
 }

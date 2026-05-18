@@ -30,6 +30,7 @@ PIPELINE_STEPS = ["clone", "static_analysis", "dependency_audit", "secret_scan",
 # ── In-memory stores ───────────────────────────────────────────────────────────
 
 _jobs: dict[str, dict] = {}
+_tasks: dict[str, asyncio.Task] = {}           # job_id → cancellable asyncio task
 _seen_prs: DefaultDict[str, set] = defaultdict(set)  # repo_url → set of PR numbers
 
 
@@ -69,6 +70,44 @@ def _risk_label(score: int) -> str:
     return "🟢 Low"
 
 
+async def _is_repo_contributor(token: str, owner: str, repo: str) -> bool:
+    """Return True only if the token's GitHub user is a collaborator on owner/repo.
+
+    Uses the GitHub collaborators endpoint — 204 means confirmed collaborator,
+    anything else (404 not a collaborator, 403 insufficient scope, network error)
+    is treated as denied. No exceptions.
+    """
+    gh_headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            user_resp = await client.get("https://api.github.com/user", headers=gh_headers)
+            if user_resp.status_code != 200:
+                log.warning("contributor check: could not resolve user", status=user_resp.status_code)
+                return False
+            username = user_resp.json().get("login", "")
+            if not username:
+                return False
+
+            collab_resp = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}",
+                headers=gh_headers,
+            )
+            allowed = collab_resp.status_code == 204
+            if not allowed:
+                log.warning(
+                    "contributor check: blocked",
+                    username=username, owner=owner, repo=repo,
+                    status=collab_resp.status_code,
+                )
+            return allowed
+    except Exception as exc:
+        log.error("contributor check: exception", error=str(exc))
+        return False
+
+
 async def _post_pr_comment(
     token: str,
     owner: str,
@@ -77,6 +116,13 @@ async def _post_pr_comment(
     job_id: str,
     report: dict,
 ) -> None:
+    if not await _is_repo_contributor(token, owner, repo):
+        log.warning(
+            "pr comment suppressed — token user is not a contributor",
+            owner=owner, repo=repo, pr=pr_number,
+        )
+        return
+
     report_text = report.get("report", "")
     risk_score = _extract_risk_score(report_text)
     summary = _extract_executive_summary(report_text)
@@ -164,7 +210,7 @@ async def _run_pipeline(
                 "dependency_audit": deps_result,
                 "secret_scan": secrets_result,
             }
-            report = await asyncio.to_thread(synthesize_report, repo_url, scan_results)
+            report = await asyncio.to_thread(synthesize_report, repo_url, scan_results, repo_path)
             repo_result["report"] = report
 
             # Post PR comment if this was auto-triggered
@@ -178,6 +224,9 @@ async def _run_pipeline(
                     report=report,
                 )
 
+        except asyncio.CancelledError:
+            # Bubble up — outer handler marks the job cancelled
+            raise
         except Exception as exc:
             log.error("scan error", job_id=job_id, repo=repo_url, error=str(exc))
             repo_result.update(success=False, error=str(exc))
@@ -192,6 +241,27 @@ async def _run_pipeline(
         results=results,
     )
     log.info("job complete", job_id=job_id)
+
+
+# Wrap the pipeline so CancelledError is caught cleanly without crashing the task
+async def _run_pipeline_safe(
+    job_id: str,
+    github_token: str,
+    repos: list[str],
+    branch: str | None = None,
+    pr_meta: dict | None = None,
+) -> None:
+    try:
+        await _run_pipeline(job_id, github_token, repos, branch, pr_meta)
+    except asyncio.CancelledError:
+        _jobs[job_id].update(
+            status="cancelled",
+            current_agent=None,
+            current_repo=None,
+        )
+        log.info("pipeline cancelled", job_id=job_id)
+    finally:
+        _tasks.pop(job_id, None)
 
 
 # ── PR polling ────────────────────────────────────────────────────────────────
@@ -308,6 +378,93 @@ class ScanRequest(BaseModel):
         return v
 
 
+# ── Security report schema ────────────────────────────────────────────────────
+
+class ReportMeta(BaseModel):
+    repo: str = ""
+    branch: str = "unknown"
+    commit: str = "unknown"
+    scanned_at: str = ""
+    scan_duration_seconds: float = 0
+    model: str = ""
+    vigilagent_version: str = "1.0.0"
+
+class BySeverity(BaseModel):
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+
+class ByCategory(BaseModel):
+    static_analysis: int = 0
+    dependency_audit: int = 0
+    secret_detection: int = 0
+
+class ReportSummary(BaseModel):
+    overall_severity: str = "UNKNOWN"
+    total_findings: int = 0
+    by_severity: BySeverity = BySeverity()
+    by_category: ByCategory = ByCategory()
+    top_priority_finding: str = ""
+
+class StaticFinding(BaseModel):
+    model_config = {"extra": "allow"}
+    id: str = ""
+    severity: str
+    rule: str = ""
+    tool: str = ""
+    file: str = ""
+    line: int | None = None
+    description: str = ""
+    recommendation: str = ""
+    raw_output: str = ""
+
+class DependencyFinding(BaseModel):
+    model_config = {"extra": "allow"}
+    id: str = ""
+    severity: str
+    tool: str = ""
+    package: str = ""
+    version: str = ""
+    cve: str = ""
+    description: str = ""
+    recommendation: str = ""
+    raw_output: str = ""
+
+class SecretFinding(BaseModel):
+    model_config = {"extra": "allow"}
+    id: str = ""
+    severity: str
+    tool: str = ""
+    secret_type: str = ""
+    file: str = ""
+    line: int | None = None
+    commit: str = ""
+    description: str = ""
+    recommendation: str = ""
+    raw_output: str = ""
+
+class ReportFindings(BaseModel):
+    static_analysis: list[StaticFinding] = []
+    dependency_audit: list[DependencyFinding] = []
+    secret_detection: list[SecretFinding] = []
+
+class AiSynthesis(BaseModel):
+    executive_summary: str = ""
+    critical_actions: list[str] = []
+    risk_assessment: str = ""
+    recommended_priority_order: list[str] = []
+
+class SecurityReport(BaseModel):
+    model_config = {"extra": "allow"}
+    meta: ReportMeta = ReportMeta()
+    summary: ReportSummary = ReportSummary()
+    findings: ReportFindings = ReportFindings()
+    ai_synthesis: AiSynthesis = AiSynthesis()
+    parse_error: str | None = None
+    raw_model_output: str | None = None
+
+
 class WatchRequest(BaseModel):
     repo_url: str
     github_token: str
@@ -348,7 +505,7 @@ def health() -> dict:
 
 
 @app.post("/scan", response_model=JobStatus, status_code=status.HTTP_202_ACCEPTED)
-async def start_scan(body: ScanRequest, background_tasks: BackgroundTasks) -> JobStatus:
+async def start_scan(body: ScanRequest) -> JobStatus:
     job_id = str(uuid.uuid4())
     repos = [str(r) for r in body.repos]
     _jobs[job_id] = {
@@ -367,7 +524,8 @@ async def start_scan(body: ScanRequest, background_tasks: BackgroundTasks) -> Jo
         "results": None,
         "error": None,
     }
-    background_tasks.add_task(_run_pipeline, job_id, body.github_token, repos)
+    task = asyncio.create_task(_run_pipeline_safe(job_id, body.github_token, repos))
+    _tasks[job_id] = task
     log.info("manual scan queued", job_id=job_id, repo_count=len(repos))
     return JobStatus(**_jobs[job_id])
 
@@ -383,6 +541,26 @@ def get_scan(job_id: str) -> JobStatus:
 @app.get("/scans", response_model=list[JobStatus])
 def list_scans() -> list[JobStatus]:
     return [JobStatus(**j) for j in _jobs.values()]
+
+
+@app.post("/scan/{job_id}/cancel")
+async def cancel_scan(job_id: str) -> dict:
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if job["status"] not in ("queued", "running"):
+        raise HTTPException(status_code=400, detail="Job is not active")
+
+    task = _tasks.get(job_id)
+    if task and not task.done():
+        task.cancel()
+    else:
+        # Auto-PR jobs aren't tracked in _tasks — mark directly
+        job.update(status="cancelled", current_agent=None, current_repo=None)
+        _tasks.pop(job_id, None)
+
+    log.info("scan cancel requested", job_id=job_id)
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 # ── Watchlist endpoints ───────────────────────────────────────────────────────
@@ -430,18 +608,28 @@ def remove_watch(owner: str, repo: str) -> None:
 
 @app.get("/reports")
 def list_reports() -> list[dict]:
-    files = sorted(settings.reports_dir.glob("*.json"), reverse=True)
-    return [{"filename": f.name, "size_bytes": f.stat().st_size} for f in files]
+    try:
+        settings.reports_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted(settings.reports_dir.glob("*.json"), reverse=True)
+        return [{"filename": f.name, "size_bytes": f.stat().st_size} for f in files]
+    except Exception as exc:
+        log.error("list_reports failed", error=str(exc))
+        return []
 
 
-@app.get("/reports/{filename}")
-def get_report(filename: str) -> dict:
+@app.get("/reports/{filename}", response_model=SecurityReport)
+def get_report(filename: str) -> SecurityReport:
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = settings.reports_dir / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Report not found")
-    return json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return SecurityReport.model_validate(data)
+    except Exception as exc:
+        log.warning("report validation failed, returning raw", filename=filename, error=str(exc))
+        return data
 
 
 @app.post("/reports/{filename}/chat")
@@ -452,19 +640,49 @@ async def chat_with_report(filename: str, body: ChatRequest) -> dict:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Report not found")
 
-    report = json.loads(path.read_text())
+    report = json.loads(path.read_text(encoding="utf-8"))
 
-    system = (
-        f"You are VigilAgent, a security expert assistant helping a developer understand "
-        f"a security audit report.\n\n"
-        f"Repository: {report.get('repo_url', 'unknown')}\n"
-        f"Scanned at: {report.get('generated_at', 'unknown')}\n\n"
-        f"SECURITY REPORT:\n{report.get('report', '')}\n\n"
-        f"RAW TOOL FINDINGS (JSON):\n"
-        f"{json.dumps(report.get('raw_scan_results', {}))[:4000]}\n\n"
-        f"Answer questions based only on the findings above. "
-        f"Cite specific files, line numbers, or CVEs when relevant. Be concise and actionable."
-    )
+    # Support both new structured schema and legacy markdown schema
+    is_new = "meta" in report and "findings" in report and "ai_synthesis" in report
+
+    if is_new:
+        meta      = report.get("meta", {})
+        summary   = report.get("summary", {})
+        findings  = report.get("findings", {})
+        synthesis = report.get("ai_synthesis", {})
+        repo_url  = meta.get("repo", "unknown")
+        scanned   = meta.get("scanned_at", "unknown")
+        findings_json = json.dumps(findings, indent=2)
+        if len(findings_json) > 6000:
+            findings_json = findings_json[:6000] + "\n... [truncated]"
+        system = (
+            f"You are VigilAgent, a security expert assistant helping a developer understand "
+            f"a security audit report.\n\n"
+            f"Repository: {repo_url}\n"
+            f"Scanned at: {scanned}\n"
+            f"Overall severity: {summary.get('overall_severity', 'UNKNOWN')}\n"
+            f"Total findings: {summary.get('total_findings', 0)}\n\n"
+            f"AI SYNTHESIS:\n"
+            f"Executive summary: {synthesis.get('executive_summary', '')}\n"
+            f"Risk assessment: {synthesis.get('risk_assessment', '')}\n\n"
+            f"STRUCTURED FINDINGS (JSON — cite id, file, line, description when answering):\n"
+            f"{findings_json}\n\n"
+            f"Answer questions based only on the findings above. "
+            f"Cite specific finding IDs, files, line numbers, or CVEs. Be concise and actionable."
+        )
+    else:
+        # Legacy markdown report
+        system = (
+            f"You are VigilAgent, a security expert assistant helping a developer understand "
+            f"a security audit report.\n\n"
+            f"Repository: {report.get('repo_url', 'unknown')}\n"
+            f"Scanned at: {report.get('generated_at', 'unknown')}\n\n"
+            f"SECURITY REPORT:\n{report.get('report', '')}\n\n"
+            f"RAW TOOL FINDINGS (JSON):\n"
+            f"{json.dumps(report.get('raw_scan_results', {}))[:4000]}\n\n"
+            f"Answer questions based only on the findings above. "
+            f"Cite specific files, line numbers, or CVEs when relevant. Be concise and actionable."
+        )
 
     messages = [{"role": "system", "content": system}]
     messages.extend(body.history)

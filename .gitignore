@@ -1,15 +1,33 @@
+# ── Secrets & local config ────────────────────────────────────────────────────
 .env
 watchlist.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
 .venv/
 venv/
-node_modules/
-repos/
-reports/
 *.egg-info/
 dist/
 build/
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── App data (never commit cloned repos or generated reports) ─────────────────
+repos/
+reports/
+
+# ── Auto-downloaded binaries (fetched by launcher scripts at runtime) ─────────
+bin/
+
+# ── OS junk ───────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+desktop.ini
+*.log

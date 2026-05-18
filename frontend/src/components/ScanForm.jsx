@@ -1,154 +1,151 @@
-import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ScanLine, AlertCircle } from 'lucide-react'
-import { api } from '../api'
-import RepoPicker from './RepoPicker'
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { submitScan } from '../api';
+import RepoPicker from './RepoPicker';
+import NeonButton from './ui/NeonButton';
+import InfoTooltip from './ui/InfoTooltip';
+import { validateGitHubToken } from '../utils/validateToken';
 
-export default function ScanForm({ profiles, selectedProfileId, onSelectProfile }) {
-  const [selectedUrls, setSelectedUrls] = useState(new Set())
-  const [manualUrls, setManualUrls] = useState('')
-  const [manualToken, setManualToken] = useState('')
-  const [useManual, setUseManual] = useState(false)
-  const qc = useQueryClient()
+const REPOS_INFO = (
+  <div className="space-y-1">
+    <p><span style={{ color: '#00f0ff' }}>Format:</span> One GitHub repo URL per line.</p>
+    <p style={{ color: '#b0b0b0' }}>Example:<br/>
+    https://github.com/owner/repo1<br/>
+    https://github.com/owner/repo2</p>
+    <p style={{ color: 'rgba(0,240,255,0.5)' }}>Or use the repo picker above to select from your account.</p>
+  </div>
+);
 
-  const selectedProfile = profiles.find(p => p.id === selectedProfileId)
-  const token = useManual ? manualToken : (selectedProfile?.token || '')
+export default function ScanForm({ selectedProfile, pickedRepos, onPickedReposChange }) {
+  const [mode, setMode]             = useState('profile');
+  const [manualToken, setManualToken] = useState('');
+  const [manualUrls, setManualUrls]   = useState('');
+  const [msg, setMsg]               = useState(null);
+  const [validating, setValidating] = useState(false);
 
-  const handleToggle = (url) => {
-    setSelectedUrls(prev => {
-      const next = new Set(prev)
-      next.has(url) ? next.delete(url) : next.add(url)
-      return next
-    })
-  }
-
-  const { mutate, isPending, error, isSuccess } = useMutation({
-    mutationFn: () => {
-      const pickedRepos = [...selectedUrls]
-      const manualRepos = manualUrls.split('\n').map(u => u.trim()).filter(Boolean)
-      const repos = [...new Set([...pickedRepos, ...manualRepos])]
-      if (!token) throw new Error('Select a profile or enter a token')
-      if (repos.length === 0) throw new Error('Select at least one repository')
-      return api.submitScan(token, repos)
-    },
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: submitScan,
     onSuccess: () => {
-      setSelectedUrls(new Set())
-      setManualUrls('')
-      qc.invalidateQueries({ queryKey: ['scans'] })
+      setManualUrls('');
+      setMsg({ ok: true, text: '// scan queued successfully' });
+      qc.invalidateQueries({ queryKey: ['scans'] });
+      setTimeout(() => setMsg(null), 4000);
     },
-  })
+    onError: e => setMsg({ ok: false, text: `✕ ${e.message}` }),
+  });
 
-  const totalCount = selectedUrls.size +
-    manualUrls.split('\n').filter(u => u.trim()).length
+  const activeToken = mode === 'profile' ? selectedProfile?.token : manualToken;
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    setMsg(null);
+
+    const urls = [
+      ...pickedRepos,
+      ...manualUrls.split('\n').map(u => u.trim()).filter(Boolean),
+    ];
+    const unique = [...new Set(urls)];
+    if (!unique.length) return setMsg({ ok: false, text: '✕ No repos selected.' });
+    if (!activeToken)   return setMsg({ ok: false, text: '✕ No GitHub token.' });
+
+    // Validate manual tokens at scan time (profile tokens are validated at save time)
+    if (mode === 'manual') {
+      setValidating(true);
+      const result = await validateGitHubToken(activeToken);
+      setValidating(false);
+      if (!result.ok) {
+        setMsg({ ok: false, text: result.message });
+        return;
+      }
+    }
+
+    mutation.mutate({ github_token: activeToken, repos: unique });
+  };
+
+  const repoCount = pickedRepos.length + manualUrls.split('\n').filter(s => s.trim()).length;
+  const busy = mutation.isPending || validating;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-      <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-        <ScanLine size={14} /> New Scan
-      </h2>
-
-      {/* Token source toggle */}
-      <div className="flex items-center gap-2 text-xs">
-        <button
-          onClick={() => setUseManual(false)}
-          className={`px-3 py-1 rounded-full transition-colors ${!useManual ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-        >
-          Use Profile
-        </button>
-        <button
-          onClick={() => setUseManual(true)}
-          className={`px-3 py-1 rounded-full transition-colors ${useManual ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-        >
-          Manual Token
-        </button>
+    <form onSubmit={handleSubmit} className="space-y-3">
+      {/* Mode toggle */}
+      <div className="flex gap-0 text-[11px]">
+        {['profile', 'manual'].map(m => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            className="flex-1 py-1 tracking-widest uppercase transition-all duration-150"
+            style={{
+              background: mode === m ? 'rgba(0,240,255,0.08)' : 'transparent',
+              color: mode === m ? '#00f0ff' : 'rgba(0,240,255,0.35)',
+              border: `1px solid ${mode === m ? 'rgba(0,240,255,0.4)' : 'rgba(0,240,255,0.1)'}`,
+              fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >
+            {m === 'profile' ? 'USE PROFILE' : 'MANUAL TOKEN'}
+          </button>
+        ))}
       </div>
 
-      {useManual ? (
-        <input
-          type="password"
-          placeholder="Paste GitHub token (ghp_...)"
-          value={manualToken}
-          onChange={e => setManualToken(e.target.value)}
-          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
-        />
-      ) : (
-        <div>
-          {profiles.length === 0 ? (
-            <p className="text-xs text-amber-400 flex items-center gap-1.5">
-              <AlertCircle size={13} /> Add a profile first (panel above)
-            </p>
-          ) : (
-            <select
-              value={selectedProfileId || ''}
-              onChange={e => {
-                onSelectProfile(e.target.value)
-                setSelectedUrls(new Set())
-              }}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-            >
-              <option value="">— select profile —</option>
-              {profiles.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          )}
+      {mode === 'profile' && !selectedProfile && (
+        <div style={{ color: 'rgba(0,240,255,0.4)', fontSize: 11 }}>
+          ↑ Select or create a profile above
         </div>
       )}
 
-      {/* Repo picker — shown when a profile is active */}
-      {!useManual && selectedProfile && (
-        <RepoPicker
-          token={selectedProfile.token}
-          selectedUrls={selectedUrls}
-          onToggle={handleToggle}
+      {mode === 'manual' && (
+        <input
+          className="w-full px-3 py-1.5 text-xs rounded-none"
+          style={{ border: '1px solid rgba(0,240,255,0.3)', fontSize: 12 }}
+          type="password"
+          placeholder="ghp_..."
+          value={manualToken}
+          onChange={e => setManualToken(e.target.value)}
         />
       )}
 
-      {/* Additional URLs textarea */}
+      {/* Repo picker */}
+      {activeToken && (
+        <div>
+          <div style={{ color: 'rgba(0,240,255,0.5)', fontSize: 10, letterSpacing: '0.1em', marginBottom: 6 }}>
+            // SELECT FROM YOUR ACCOUNT
+          </div>
+          <RepoPicker token={activeToken} selected={pickedRepos} onChange={onPickedReposChange} />
+        </div>
+      )}
+
+      {/* Manual URLs */}
       <div>
-        <label className="text-xs text-slate-500 mb-1 block">
-          {selectedProfile && !useManual
-            ? 'Additional URLs'
-            : 'Repository URLs'}
-          {' '}
-          <span className="text-slate-600">(one per line)</span>
-        </label>
+        <div className="flex items-center gap-1.5 mb-1" style={{ color: 'rgba(0,240,255,0.5)', fontSize: 10, letterSpacing: '0.1em' }}>
+          // OR PASTE URLS
+          <InfoTooltip content={REPOS_INFO} />
+        </div>
         <textarea
-          rows={3}
-          placeholder={"https://github.com/owner/repo"}
+          className="w-full px-3 py-2 text-xs rounded-none resize-none"
+          style={{ border: '1px solid rgba(0,240,255,0.2)', fontSize: 11, minHeight: 72 }}
+          placeholder="https://github.com/owner/repo"
           value={manualUrls}
           onChange={e => setManualUrls(e.target.value)}
-          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono resize-none"
         />
       </div>
 
-      {error && (
-        <p className="text-xs text-red-400 flex items-center gap-1.5">
-          <AlertCircle size={13} /> {error.message}
-        </p>
+      {validating && (
+        <div style={{ color: 'rgba(0,240,255,0.5)', fontSize: 10, letterSpacing: '0.08em' }} className="animate-pulse">
+          // validating token permissions...
+        </div>
       )}
 
-      {isSuccess && (
-        <p className="text-xs text-emerald-400">Scan queued — monitor progress on the right.</p>
+      {msg && (
+        <div className="p-2 text-[11px] leading-relaxed whitespace-pre-line"
+          style={{ color: msg.ok ? '#00ff88' : '#ff4444', border: `1px solid ${msg.ok ? 'rgba(0,255,136,0.2)' : 'rgba(255,68,68,0.2)'}`, background: msg.ok ? 'rgba(0,255,136,0.04)' : 'rgba(255,68,68,0.04)' }}>
+          {msg.text}
+        </div>
       )}
 
-      <button
-        onClick={() => mutate()}
-        disabled={isPending}
-        className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition-colors text-sm"
-      >
-        {isPending ? (
-          <>
-            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            Queuing…
-          </>
-        ) : (
-          <>
-            <ScanLine size={15} />
-            {totalCount > 0 ? `Scan ${totalCount} repo${totalCount !== 1 ? 's' : ''}` : 'Launch Scan'}
-          </>
-        )}
-      </button>
-    </div>
-  )
+      <NeonButton green type="submit" disabled={busy || !activeToken} className="w-full justify-center">
+        {validating ? '// VALIDATING...' : busy ? '// SCANNING...' : `▶ SCAN${repoCount > 0 ? ` (${repoCount})` : ''}`}
+      </NeonButton>
+    </form>
+  );
 }

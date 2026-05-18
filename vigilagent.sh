@@ -167,7 +167,7 @@ else
     echo -e "${GREEN}✅  Ollama is running${NC}"
 fi
 
-MODEL="nemotron3-nano:30b"
+MODEL="nemotron-3-nano:30b"
 if ! ollama list 2>/dev/null | grep -q "$MODEL"; then
     echo -e "    ${YELLOW}Model '$MODEL' not found locally.${NC}"
     echo -e "    ${YELLOW}Starting download — this can take several minutes depending on your connection…${NC}"

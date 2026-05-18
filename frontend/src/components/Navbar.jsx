@@ -1,50 +1,84 @@
-import { Link, useLocation } from 'react-router-dom'
-import { Shield, LayoutDashboard, FileText, Settings } from 'lucide-react'
+import { NavLink } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { health } from '../api';
+import logo from '../assets/vigilagent_logo.svg';
+import StatusDot from './ui/StatusDot';
 
-const links = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/reports', label: 'Reports', icon: FileText },
-  { to: '/profiles', label: 'Profiles', icon: Settings },
-]
+const LINKS = [
+  { to: '/',         label: 'DASHBOARD' },
+  { to: '/reports',  label: 'REPORTS'   },
+  { to: '/profiles', label: 'PROFILES'  },
+];
 
 export default function Navbar() {
-  const { pathname } = useLocation()
+  const { data } = useQuery({
+    queryKey: ['health'],
+    queryFn: health,
+    refetchInterval: 15000,
+    retry: false,
+  });
+  const online = !!data;
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-slate-900 border-b border-slate-800 no-print">
-      <div className="max-w-7xl mx-auto px-4 flex items-center h-14 gap-8">
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-2 text-indigo-400 font-bold text-lg shrink-0">
-          <Shield size={20} className="text-indigo-400" />
-          VigilAgent
-        </Link>
+    <nav
+      className="fixed top-0 left-0 right-0 z-50 no-print flex items-center justify-between px-4 h-12"
+      style={{
+        background: 'rgba(10,10,10,0.96)',
+        borderBottom: '1px solid rgba(0,240,255,0.15)',
+        backdropFilter: 'blur(8px)',
+      }}
+    >
+      {/* Logo */}
+      <NavLink to="/" className="flex items-center shrink-0">
+        <img src={logo} alt="VigilAgent" className="h-8 w-auto" />
+      </NavLink>
 
-        {/* Nav links */}
-        <div className="flex items-center gap-1">
-          {links.map(({ to, label, icon: Icon }) => {
-            const active = pathname === to
-            return (
-              <Link
-                key={to}
-                to={to}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-indigo-600/20 text-indigo-400'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
-                }`}
-              >
-                <Icon size={15} />
-                {label}
-              </Link>
-            )
-          })}
-        </div>
+      {/* Nav links */}
+      <div className="flex items-center gap-0.5">
+        {LINKS.map(({ to, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            style={({ isActive }) => ({
+              color: '#00f0ff',
+              fontFamily: 'inherit',
+              fontSize: '11px',
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              padding: '4px 12px',
+              opacity: isActive ? 1 : 0.45,
+              borderBottom: isActive ? '1px solid #00f0ff' : '1px solid transparent',
+              textShadow: isActive ? '0 0 8px rgba(0,240,255,0.7)' : 'none',
+              textDecoration: 'none',
+              transition: 'all 0.15s',
+            })}
+            onMouseEnter={e => { e.currentTarget.style.opacity = 1; }}
+            onMouseLeave={e => {
+              // active check not available here — rely on NavLink className fallback
+            }}
+          >
+            {label}
+          </NavLink>
+        ))}
+      </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-slate-600 font-mono">nemotron-3-super (local)</span>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="API online" />
-        </div>
+      {/* Status */}
+      <div className="flex items-center gap-2" style={{ fontSize: 11, letterSpacing: '0.1em' }}>
+        <StatusDot active={online} />
+        <span style={{
+          color: online ? '#00ff88' : '#ff4444',
+          textShadow: online ? '0 0 6px rgba(0,255,136,0.6)' : 'none',
+          fontWeight: 700,
+        }}>
+          {online ? 'SYSTEM ONLINE' : 'OFFLINE'}
+        </span>
+        {online && data?.model && (
+          <span className="hidden md:inline" style={{ color: 'rgba(0,240,255,0.35)', fontSize: 10 }}>
+            // {data.model}
+          </span>
+        )}
       </div>
     </nav>
-  )
+  );
 }

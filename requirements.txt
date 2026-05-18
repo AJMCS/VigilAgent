@@ -2,7 +2,7 @@
 fastapi==0.115.5
 pydantic-settings==2.6.1
 uvicorn[standard]==0.32.1
-pydantic==2.9.2
+pydantic>=2.11.0
 python-dotenv==1.0.1
 httpx==0.27.2
 
@@ -13,11 +13,8 @@ langchain-core==0.3.25
 # OpenAI-compatible client (used for NVIDIA NIM endpoint)
 openai==1.57.2
 
-# Async utilities
-anyio==4.7.0
-
 # Scan tools
-semgrep
+semgrep==1.163.0
 bandit
 pip-audit
 

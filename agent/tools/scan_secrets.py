@@ -1,29 +1,44 @@
 """Secret detection: gitleaks + trufflehog."""
 import json
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 
 def run_gitleaks(repo_path: str) -> dict:
-    result = subprocess.run(
-        [
-            "gitleaks",
-            "detect",
-            "--source", repo_path,
-            "--report-format", "json",
-            "--report-path", "/dev/stdout",
-            "--no-git",
-            "--exit-code", "0",  # don't fail the process on findings
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    # Write to a temp file — /dev/stdout doesn't exist on Windows
+    tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
 
     try:
-        findings = json.loads(result.stdout) or []
-    except json.JSONDecodeError:
-        findings = []
+        result = subprocess.run(
+            [
+                "gitleaks",
+                "detect",
+                "--source", repo_path,
+                "--report-format", "json",
+                "--report-path", tmp_path,
+                "--no-git",
+                "--exit-code", "0",  # don't fail the process on findings
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            findings = json.loads(content) if content else []
+        except (json.JSONDecodeError, FileNotFoundError):
+            findings = []
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     return {
         "tool": "gitleaks",
@@ -64,11 +79,11 @@ def run_trufflehog(repo_path: str) -> dict:
 
 
 def scan_secrets(repo_path: str) -> dict:
-    gitleaks = run_gitleaks(repo_path)
+    gitleaks   = run_gitleaks(repo_path)
     trufflehog = run_trufflehog(repo_path)
 
     return {
-        "gitleaks": gitleaks,
-        "trufflehog": trufflehog,
+        "gitleaks":       gitleaks,
+        "trufflehog":     trufflehog,
         "total_findings": len(gitleaks["findings"]) + len(trufflehog["findings"]),
     }

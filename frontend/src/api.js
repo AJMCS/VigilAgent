@@ -47,16 +47,27 @@ export const api = {
   listScans: () => request('/scans'),
   listReports: () => request('/reports'),
   getReport: (filename) => request(`/reports/${encodeURIComponent(filename)}`),
-  // Report chat
   chatWithReport: (filename, question, history) =>
     request(`/reports/${encodeURIComponent(filename)}/chat`, {
       method: 'POST',
       body: JSON.stringify({ question, history }),
     }),
-  // Watchlist
   getWatchlist: () => request('/watch'),
   addWatch: (repo_url, github_token) =>
     request('/watch', { method: 'POST', body: JSON.stringify({ repo_url, github_token }) }),
   removeWatch: (owner, repo) =>
     request(`/watch/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, { method: 'DELETE' }),
 }
+
+// Named exports for direct import convenience
+export const cancelScan    = id => request(`/scan/${id}/cancel`, { method: 'POST' })
+export const health        = () => api.health()
+export const submitScan    = ({ github_token, repos }) => api.submitScan(github_token, repos)
+export const getScan       = id => api.getScan(id)
+export const listScans     = () => api.listScans()
+export const listReports   = () => api.listReports()
+export const getReport     = f  => api.getReport(f)
+export const chatWithReport = (f, q, h) => api.chatWithReport(f, q, h)
+export const getWatchlist  = () => api.getWatchlist()
+export const addWatch      = ({ repo_url, github_token }) => api.addWatch(repo_url, github_token)
+export const removeWatch   = (owner, repo) => api.removeWatch(owner, repo)
