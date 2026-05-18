@@ -72,12 +72,14 @@ if (-not (Get-Command gitleaks -ErrorAction SilentlyContinue)) {
 
 # trufflehog — download to bin/ if not on PATH
 if (-not (Get-Command trufflehog -ErrorAction SilentlyContinue)) {
-    Write-Host "  trufflehog not found — downloading latest to bin\..." -ForegroundColor Yellow
+    Write-Host "  trufflehog not found — looking up latest release..." -ForegroundColor Yellow
     Write-Host "             Starting download, please wait..." -ForegroundColor DarkGray
-    $thUrl = "https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_windows_amd64.zip"
     $thZip = Join-Path $BinDir "trufflehog.zip"
     try {
-        Invoke-WebRequest -Uri $thUrl -OutFile $thZip -UseBasicParsing
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest" -UseBasicParsing
+        $asset = $release.assets | Where-Object { $_.name -like "*windows_amd64*.zip" } | Select-Object -First 1
+        if (-not $asset) { throw "No Windows asset found in latest release" }
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $thZip -UseBasicParsing
         Expand-Archive -Path $thZip -DestinationPath $BinDir -Force
         Remove-Item $thZip -ErrorAction SilentlyContinue
         Write-Host "  trufflehog downloaded" -ForegroundColor Green
