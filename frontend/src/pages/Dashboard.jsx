@@ -81,7 +81,7 @@ export default function Dashboard() {
   const reposScanned = scans.reduce((n, j) => n + (j.repos?.length || 1), 0);
 
   return (
-    <div className="pt-12 min-h-screen flex flex-col">
+    <div className="pt-12 h-screen flex flex-col overflow-hidden">
       {/* Stats bar */}
       <div
         className="flex shrink-0"

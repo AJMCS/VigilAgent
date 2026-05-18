@@ -67,7 +67,7 @@ export default function ProfileManager({ profiles, addProfile, removeProfile, se
           No profiles. Add one below.
         </div>
       ) : (
-        <div className="space-y-1.5">
+        <div className="space-y-1.5" style={{ maxHeight: 172, overflowY: 'auto', overflowX: 'hidden' }}>
           {profiles.map(p => {
             const active = p.id === selectedId;
             return (

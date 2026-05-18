@@ -94,7 +94,7 @@ export default function ModelSelector() {
           to install one.
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="space-y-1" style={{ maxHeight: 164, overflowY: 'auto', overflowX: 'hidden' }}>
           {models.map(m => {
             const isActive   = m.name === current;
             const isLoading  = m.name === switching;
