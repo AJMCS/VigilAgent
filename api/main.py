@@ -726,6 +726,7 @@ async def global_report_chat(body: ChatRequest) -> dict:
             messages=messages,
             temperature=0.2,
             max_tokens=2048,
+            extra_body={"options": {"num_ctx": settings.ollama_num_ctx}},
         )
     )
     return {"answer": response.choices[0].message.content}
@@ -839,6 +840,7 @@ async def chat_with_report(filename: str, body: ChatRequest) -> dict:
             messages=messages,
             temperature=0.3,
             max_tokens=2048,
+            extra_body={"options": {"num_ctx": settings.ollama_num_ctx}},
         )
     )
     return {"answer": response.choices[0].message.content}

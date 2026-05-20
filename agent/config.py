@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     llm_api_key: str = "ollama"   # Ollama ignores this; OpenAI client requires it
     primary_model: str = "nemotron-3-nano:30b"
     subagent_model: str = "nemotron-3-nano:30b"
+    # Ollama context window — default is 2048 which is too small for report prompts.
+    # Set higher to avoid silent input truncation that causes empty model responses.
+    ollama_num_ctx: int = 16384
 
     github_client_id: str = ""
     github_client_secret: str = ""

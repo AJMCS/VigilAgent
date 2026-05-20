@@ -219,7 +219,11 @@ def _call_model(client: OpenAI, messages: list[dict]) -> str:
         model=settings.primary_model,
         messages=messages,
         temperature=0.1,
-        max_tokens=4096,  # 8192 exceeds many local models' context window
+        max_tokens=4096,
+        # Tell Ollama to use a larger context window. The default of 2048 tokens
+        # is far smaller than our prompt (schema + rules + scan results), causing
+        # the model to silently truncate input and return an empty response.
+        extra_body={"options": {"num_ctx": settings.ollama_num_ctx}},
     )
     content = resp.choices[0].message.content
     if not content:
