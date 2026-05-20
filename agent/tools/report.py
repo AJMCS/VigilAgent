@@ -221,7 +221,11 @@ def _call_model(client: OpenAI, messages: list[dict]) -> str:
         temperature=0.1,
         max_tokens=4096,  # 8192 exceeds many local models' context window
     )
-    return resp.choices[0].message.content
+    content = resp.choices[0].message.content
+    if not content:
+        finish_reason = resp.choices[0].finish_reason
+        raise ValueError(f"Model returned empty response (finish_reason={finish_reason!r})")
+    return content
 
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
@@ -296,6 +300,195 @@ SCHEMA:
 {SCHEMA}"""
 
 
+# ── Fallback parser ────────────────────────────────────────────────────────────
+
+def _sev_semgrep(s: str) -> str:
+    return {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}.get(s.upper(), "LOW")
+
+
+def _sev_bandit(s: str) -> str:
+    return {"HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW"}.get(s.upper(), "LOW")
+
+
+def _sev_npm(s: str) -> str:
+    return {"critical": "CRITICAL", "high": "HIGH", "moderate": "MEDIUM", "medium": "MEDIUM", "low": "LOW"}.get(s.lower(), "LOW")
+
+
+def _build_fallback_report(scan_results: dict, ai_error: str) -> dict:
+    """Parse raw tool output into the report schema when AI synthesis fails."""
+    static = scan_results.get("static_analysis", {})
+    deps   = scan_results.get("dependency_audit", {})
+    secrets = scan_results.get("secret_scan", {})
+
+    static_findings: list[dict] = []
+    for raw in static.get("semgrep", {}).get("findings", []):
+        extra = raw.get("extra", {})
+        static_findings.append({
+            "severity": _sev_semgrep(extra.get("severity", "INFO")),
+            "rule": raw.get("check_id", ""),
+            "tool": "semgrep",
+            "file": raw.get("path", ""),
+            "line": raw.get("start", {}).get("line"),
+            "description": extra.get("message", ""),
+            "recommendation": extra.get("metadata", {}).get("fix", "Review and remediate this finding."),
+            "attack_scenario": "",
+            "blast_radius": "",
+            "false_positive_likelihood": "MEDIUM",
+            "false_positive_reasoning": "AI synthesis unavailable — manual review required.",
+            "verification_steps": [],
+            "raw_output": json.dumps(raw)[:500],
+        })
+    for raw in static.get("bandit", {}).get("findings", []):
+        static_findings.append({
+            "severity": _sev_bandit(raw.get("issue_severity", "LOW")),
+            "rule": raw.get("test_name", ""),
+            "tool": "bandit",
+            "file": raw.get("filename", ""),
+            "line": raw.get("line_number"),
+            "description": raw.get("issue_text", ""),
+            "recommendation": "Review and remediate this bandit finding.",
+            "attack_scenario": "",
+            "blast_radius": "",
+            "false_positive_likelihood": "MEDIUM",
+            "false_positive_reasoning": "AI synthesis unavailable — manual review required.",
+            "verification_steps": [],
+            "raw_output": json.dumps(raw)[:500],
+        })
+
+    dep_findings: list[dict] = []
+    for pkg in deps.get("pip_audit", {}).get("findings", []):
+        for vuln in pkg.get("vulns", []):
+            fix_vers = ", ".join(vuln.get("fix_versions", [])) or "latest fixed version"
+            dep_findings.append({
+                "severity": "HIGH",
+                "tool": "pip-audit",
+                "package": pkg.get("package", ""),
+                "version": pkg.get("version", ""),
+                "cve": vuln.get("id", ""),
+                "description": vuln.get("description", ""),
+                "recommendation": f"Upgrade to {fix_vers}.",
+                "attack_scenario": "",
+                "blast_radius": "",
+                "false_positive_likelihood": "LOW",
+                "false_positive_reasoning": "Known CVE match — manual review still recommended.",
+                "verification_steps": ["Re-run pip-audit after upgrading."],
+                "raw_output": json.dumps(pkg)[:500],
+            })
+    for finding in deps.get("npm_audit", {}).get("findings", []):
+        dep_findings.append({
+            "severity": _sev_npm(finding.get("severity", "low")),
+            "tool": "npm-audit",
+            "package": finding.get("package", ""),
+            "version": "",
+            "cve": "",
+            "description": f"Vulnerable range: {finding.get('range', 'unknown')}",
+            "recommendation": "Run npm audit fix or upgrade the affected package.",
+            "attack_scenario": "",
+            "blast_radius": "",
+            "false_positive_likelihood": "LOW",
+            "false_positive_reasoning": "npm audit finding — manual review recommended.",
+            "verification_steps": ["Re-run npm audit after upgrading."],
+            "raw_output": json.dumps(finding)[:500],
+        })
+
+    secret_findings: list[dict] = []
+    for raw in secrets.get("gitleaks", {}).get("findings", []):
+        secret_findings.append({
+            "severity": "CRITICAL",
+            "tool": "gitleaks",
+            "secret_type": raw.get("RuleID", "unknown"),
+            "file": raw.get("File", ""),
+            "line": raw.get("StartLine"),
+            "commit": raw.get("Commit", ""),
+            "description": raw.get("Description", "Secret detected by gitleaks."),
+            "recommendation": "Revoke and rotate this credential immediately. Remove from code history.",
+            "attack_scenario": "",
+            "blast_radius": "",
+            "false_positive_likelihood": "MEDIUM",
+            "false_positive_reasoning": "AI synthesis unavailable — verify manually.",
+            "verification_steps": ["Revoke the credential.", "Re-run gitleaks to confirm removal."],
+            "raw_output": json.dumps({k: v for k, v in raw.items() if k != "Secret"})[:500],
+        })
+    for raw in secrets.get("trufflehog", {}).get("findings", []):
+        fs_meta = raw.get("SourceMetadata", {}).get("Data", {}).get("Filesystem", {})
+        verified = raw.get("Verified", False)
+        secret_findings.append({
+            "severity": "CRITICAL",
+            "tool": "trufflehog",
+            "secret_type": raw.get("DetectorName", "unknown"),
+            "file": fs_meta.get("file", ""),
+            "line": fs_meta.get("line"),
+            "commit": "",
+            "description": f"{'Verified' if verified else 'Unverified'} secret detected by TruffleHog.",
+            "recommendation": "Revoke and rotate this credential immediately. Remove from code history.",
+            "attack_scenario": "",
+            "blast_radius": "",
+            "false_positive_likelihood": "LOW" if verified else "MEDIUM",
+            "false_positive_reasoning": "Verified by TruffleHog." if verified else "Unverified — check manually.",
+            "verification_steps": ["Revoke the credential.", "Re-run trufflehog to confirm removal."],
+            "raw_output": json.dumps({k: v for k, v in raw.items() if k not in ("Raw", "RawV2")})[:500],
+        })
+
+    all_findings = static_findings + dep_findings + secret_findings
+    total = len(all_findings)
+
+    by_sev = {
+        "critical": sum(1 for f in all_findings if f["severity"] == "CRITICAL"),
+        "high":     sum(1 for f in all_findings if f["severity"] == "HIGH"),
+        "medium":   sum(1 for f in all_findings if f["severity"] == "MEDIUM"),
+        "low":      sum(1 for f in all_findings if f["severity"] == "LOW"),
+    }
+    if by_sev["critical"]:   overall = "CRITICAL"
+    elif by_sev["high"]:     overall = "HIGH"
+    elif by_sev["medium"]:   overall = "MEDIUM"
+    elif by_sev["low"]:      overall = "LOW"
+    else:                    overall = "CLEAN"
+
+    top = (
+        next((f["description"][:120] for f in all_findings if f["severity"] == "CRITICAL"), None)
+        or next((f["description"][:120] for f in all_findings if f["severity"] == "HIGH"), None)
+        or (all_findings[0]["description"][:120] if all_findings else "No findings detected.")
+    )
+
+    clean_ctx = (
+        "Repository appears clean based on tool output. AI synthesis was unavailable for deeper analysis."
+        if total == 0 else ""
+    )
+
+    return {
+        "summary": {
+            "overall_severity": overall,
+            "total_findings": total,
+            "by_severity": by_sev,
+            "by_category": {
+                "static_analysis": len(static_findings),
+                "dependency_audit": len(dep_findings),
+                "secret_detection": len(secret_findings),
+            },
+            "top_priority_finding": top,
+        },
+        "findings": {
+            "static_analysis": static_findings,
+            "dependency_audit": dep_findings,
+            "secret_detection": secret_findings,
+        },
+        "ai_synthesis": {
+            "executive_summary": (
+                f"AI synthesis failed ({ai_error}). "
+                f"Findings were parsed directly from tool outputs — enrichment fields are unavailable."
+            ),
+            "critical_actions": [f["description"][:120] for f in all_findings if f["severity"] == "CRITICAL"][:5],
+            "risk_assessment": "",
+            "recommended_priority_order": [],
+            "single_most_important_action": "",
+            "finding_relationships": [],
+            "scan_coverage_gaps": [],
+            "clean_repo_context": clean_ctx,
+        },
+        "ai_synthesis_error": ai_error,
+    }
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def synthesize_report(
@@ -326,16 +519,13 @@ def synthesize_report(
             try:
                 report = _parse_and_validate(raw2)
             except Exception as e2:
-                err = _error_report(repo_url, start, raw2, str(e2))
-                saved = _save(err, repo_url)
-                return err, saved.name
+                # AI failed twice — fall back to parsing raw tool output directly
+                report = _build_fallback_report(scan_results, str(e2))
 
     except Exception as model_exc:
-        # Model call itself failed (timeout, context overflow, Ollama error, etc.)
-        # Always save an error report so the file appears in the reports tab.
-        err = _error_report(repo_url, start, "", str(model_exc))
-        saved = _save(err, repo_url)
-        return err, saved.name
+        # Model call itself failed (timeout, context overflow, empty response, etc.)
+        # Fall back to parsing raw tool output so findings are not lost.
+        report = _build_fallback_report(scan_results, str(model_exc))
 
     # ── Post-processing: Python owns meta and IDs ─────────────────────────────
     report = _populate_meta(report, repo_url, start, clone_path)
